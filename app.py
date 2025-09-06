@@ -65,7 +65,7 @@ RENAME_MAP = {
 }
 
 def compute_spt_avg(value):
-    \"\"\"Return label like 'N = 12.5' from comma-separated SPT list or 'N = N/A'.\"\"\"
+    """Return label like 'N = 12.5' from comma-separated SPT list or 'N = N/A'."""
     if value is None:
         return "N = N/A"
     s = str(value).strip()
@@ -113,7 +113,6 @@ def make_borehole_coords(df: pd.DataFrame) -> pd.DataFrame:
     return df.groupby('Borehole')[['Latitude','Longitude']].first().reset_index()
 
 # ── Proposed-only loader ─────────────────────────────────────────────────────
-
 def normalize_cols_general(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
@@ -146,7 +145,6 @@ def load_proposed_df(uploaded_bytes: bytes) -> pd.DataFrame:
         return pd.DataFrame(columns=["Latitude","Longitude","Name"])
 
 # ── Section helpers ──────────────────────────────────────────────────────────
-
 def total_geodesic_length_ft_of_linestring(line: LineString) -> float:
     coords = list(line.coords)
     total = 0.0
@@ -168,7 +166,6 @@ def chainage_and_offset_ft(line: LineString, lat: float, lon: float) -> Tuple[fl
     return float(chain_ft), float(off_ft)
 
 # ── Profile plot ─────────────────────────────────────────────────────────────
-
 def plot_soil_profile_original_style(
     df: pd.DataFrame,
     selected_bhs_ordered: List[str],
@@ -252,7 +249,6 @@ def plot_soil_profile_original_style(
     return fig
 
 # ── Map helpers ──────────────────────────────────────────────────────────────
-
 def add_labeled_point(fmap: folium.Map, lat: float, lon: float, name: str, text_color: str):
     folium.CircleMarker(
         location=(lat, lon),
@@ -378,7 +374,7 @@ draw = Draw(
 )
 draw.add_to(fmap)
 
-st.subheader("Map – draw your section (double‑click to finish)")
+st.subheader("Map – draw your section (double-click to finish)")
 map_out = st_folium(fmap, height=600, use_container_width=True, returned_objects=["all_drawings"])
 
 # Extract the last LineString from the draw control output
@@ -466,4 +462,4 @@ st.download_button("Download CSV (section_boreholes.csv)", data=csv_bytes, file_
 st.download_button("Download section line (section_line.geojson)", data=gj_bytes, file_name="section_line.geojson", mime="application/geo+json", use_container_width=True)
 st.download_button("Download plot (soil_profile.png)", data=png_bytes, file_name="soil_profile.png", mime="image/png", use_container_width=True)
 
-st.caption("✅ Labels are clean text (no bubble) with white halo; dots are larger for visibility. Draw your section, set corridor/Y‑limits/title/figure size, then generate and download.")
+st.caption("✅ Labels are clean text (no bubble) with white halo; dots are larger for visibility. Draw your section, set corridor/Y-limits/title/figure size, then generate and download.")
