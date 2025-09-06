@@ -1,8 +1,8 @@
-# app.py — Auto-generate interactive profile
-# Layout: 1) Map with Bore Logs → 2) Section/Profile heading + Corridor slider → 3) Interactive profile
+# app.py — Auto-generate 2D & 3D section profiles (no buttons)
+# Layout: 1) Map with Bore Logs → 2) Section/Profile heading + Corridor slider → 3) 2D profile → 4) 3D profile
 
-import io
 from typing import Dict, List, Tuple
+import io
 
 import pandas as pd
 from geopy.distance import geodesic
@@ -24,11 +24,11 @@ CIRCLE_STROKE_W     = 1
 CIRCLE_FILL_OPACITY = 0.95
 LABEL_DX_PX, LABEL_DY_PX = 8, -10
 
-# Default profile settings (kept internal; no UI)
+# Default profile settings (kept internal; no extra UI)
 Y_MIN_DEFAULT = 900.0
 Y_MAX_DEFAULT = 1060.0
 TITLE_DEFAULT = "Soil Profile"
-FIG_HEIGHT_IN = 20.0  # x≈50 → px
+FIG_HEIGHT_IN = 20.0  # ~inches→pixels using *50
 
 # Fixed soil colors + legend order
 SOIL_COLOR_MAP = {
@@ -135,7 +135,7 @@ def chainage_and_offset_ft(line: LineString, lat: float, lon: float) -> Tuple[fl
     off_ft = geodesic((lat, lon), (nearest.y, nearest.x)).feet
     return float(chain_ft), float(off_ft)
 
-# ── interactive profile builder ──────────────────────────────────────────────
+# ── 2D profile builder ───────────────────────────────────────────────────────
 def build_plotly_profile(
     df: pd.DataFrame, ordered_bhs: List[str], x_positions: Dict[str,float],
     y_min: float, y_max: float, title: str, column_width: float = 60.0,
@@ -147,7 +147,7 @@ def build_plotly_profile(
 
     for bh in ordered_bhs:
         bore = df[df['Borehole'] == bh]
-        if bore.empty: 
+        if bore.empty:
             continue
         x = x_positions[bh]
         top_el = bore['Elevation_From'].max()
@@ -187,6 +187,111 @@ def build_plotly_profile(
     )
     fig.update_xaxes(range=[xmin, xmax], showgrid=True, gridcolor="#eee")
     fig.update_yaxes(range=[y_min, y_max], showgrid=True, gridcolor="#eee")
+    return fig
+
+# ── 3D profile builder ───────────────────────────────────────────────────────
+def build_3d_profile(
+    df: pd.DataFrame,
+    selected_bhs: List[str],
+    positions_chainage: Dict[str, float],
+    y_min: float,
+    y_max: float,
+    title: str,
+    column_width: float = 60.0,
+    row_gap: float = 1.2,
+    col_half_override: float | None = None,
+) -> go.Figure:
+    """
+    Interactive 3D profile using Mesh3d.
+    x → chainage (ft), y → borehole index (spaced by row_gap), z → elevation (ft).
+    Each soil layer becomes a thin cuboid colored by SOIL_COLOR_MAP.
+    """
+    half = (col_half_override if col_half_override is not None else column_width/2.0)
+
+    meshes: list[go.Mesh3d] = []
+    used_types = set()
+    unknown_types = set()
+
+    # Borehole label anchors
+    label_x, label_y, label_z, label_text = [], [], [], []
+
+    for idx, bh in enumerate(selected_bhs):
+        bore = df[df['Borehole'] == bh]
+        if bore.empty:
+            continue
+        x_center = float(positions_chainage.get(bh, 0.0))
+        y_center = idx * row_gap
+        x0, x1 = x_center - half, x_center + half
+        y0, y1 = y_center - 0.5, y_center + 0.5
+
+        # Borehole label above top elevation
+        top_el = float(bore['Elevation_From'].max())
+        label_x.append(x_center)
+        label_y.append(y_center)
+        label_z.append(top_el + 3)
+        label_text.append(str(bh))
+
+        for _, r in bore.iterrows():
+            z0 = float(r['Elevation_To'])
+            z1 = float(r['Elevation_From'])
+            soil = str(r['Soil_Type'])
+            color = SOIL_COLOR_MAP.get(soil, '#cccccc')
+            if soil not in SOIL_COLOR_MAP:
+                unknown_types.add(soil)
+            used_types.add(soil)
+
+            # 8 cuboid vertices
+            xs = [x0, x1, x1, x0, x0, x1, x1, x0]
+            ys = [y0, y0, y1, y1, y0, y0, y1, y1]
+            zs = [z0, z0, z0, z0, z1, z1, z1, z1]
+            # 12 triangles
+            i = [0, 0, 4, 4, 0, 0, 1, 1, 2, 2, 3, 3]
+            j = [1, 2, 5, 6, 1, 5, 2, 6, 3, 7, 0, 4]
+            k = [2, 3, 6, 7, 5, 4, 6, 5, 7, 6, 4, 7]
+
+            meshes.append(go.Mesh3d(
+                x=xs, y=ys, z=zs,
+                i=i, j=j, k=k,
+                color=color,
+                opacity=0.96,
+                flatshading=True,
+                lighting=dict(ambient=0.6, diffuse=0.6),
+                hoverinfo='skip',
+                showlegend=False,
+            ))
+
+    fig = go.Figure(data=meshes)
+
+    # Legend as dummy points following fixed order
+    legend_types = [s for s in ORDERED_SOIL_TYPES if s in used_types]
+    legend_types += [s for s in sorted(unknown_types) if s not in legend_types]
+    for soil in legend_types:
+        fig.add_trace(go.Scatter3d(x=[None], y=[None], z=[None], mode='markers',
+                                   marker=dict(size=8, color=SOIL_COLOR_MAP.get(soil, '#ccc')),
+                                   name=soil, showlegend=True))
+
+    # Borehole name annotations
+    if label_text:
+        fig.add_trace(go.Scatter3d(
+            x=label_x, y=label_y, z=label_z,
+            mode='text', text=label_text,
+            textposition='top center',
+            showlegend=False,
+        ))
+
+    fig.update_layout(
+        title=f"{title} — 3D",
+        scene=dict(
+            xaxis=dict(title='Chainage (ft)', backgroundcolor='white', gridcolor='#eee'),
+            yaxis=dict(title='Borehole index', backgroundcolor='white', gridcolor='#eee'),
+            zaxis=dict(title='Elevation (ft)', range=[y_min, y_max], backgroundcolor='white', gridcolor='#eee'),
+            aspectmode='data',
+            camera=dict(eye=dict(x=1.4, y=1.2, z=0.8))
+        ),
+        height=750,
+        margin=dict(l=40, r=260, t=60, b=40),
+        legend=dict(yanchor='top', y=1, xanchor='left', x=1.02, bordercolor='#ddd', borderwidth=1)
+    )
     return fig
 
 # ── map helpers ──────────────────────────────────────────────────────────────
@@ -292,7 +397,7 @@ corridor_ft = st.slider("Corridor width (ft)", min_value=50, max_value=1000, val
 
 # Auto-generate only when a line exists
 if not st.session_state["section_line_coords"]:
-    st.info("Draw a polyline on the map (double-click to finish). The profile will appear below automatically.")
+    st.info("Draw a polyline on the map (double-click to finish). The profiles will appear below automatically.")
     st.stop()
 
 section_line = LineString(st.session_state["section_line_coords"])
@@ -311,12 +416,23 @@ if not rows:
 ordered_bhs = [r["Borehole"] for r in sorted(rows, key=lambda x: (x["Chainage_ft"], x["Borehole"]))]
 xpos = {r["Borehole"]: r["Chainage_ft"] for r in rows}
 
-# ── 3) Interactive profile ──────────────────────────────────────────────────
+# ── 3) Interactive 2D profile ───────────────────────────────────────────────
 fig_height_px = int(FIG_HEIGHT_IN * 50)
 plot_df = df[df['Borehole'].isin(ordered_bhs)]
-fig = build_plotly_profile(
+fig2d = build_plotly_profile(
     df=plot_df, ordered_bhs=ordered_bhs, x_positions=xpos,
     y_min=Y_MIN_DEFAULT, y_max=Y_MAX_DEFAULT, title=TITLE_DEFAULT,
     fig_height_px=fig_height_px
 )
-st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+st.plotly_chart(fig2d, use_container_width=True, config={"displaylogo": False})
+
+# ── 4) Interactive 3D profile ───────────────────────────────────────────────
+fig3d = build_3d_profile(
+    df=plot_df,
+    selected_bhs=ordered_bhs,
+    positions_chainage=xpos,
+    y_min=Y_MIN_DEFAULT,
+    y_max=Y_MAX_DEFAULT,
+    title=TITLE_DEFAULT,
+)
+st.plotly_chart(fig3d, use_container_width=True, config={"displaylogo": False})
