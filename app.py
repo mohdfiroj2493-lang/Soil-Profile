@@ -1,4 +1,4 @@
-# app.py — Streamlit Borehole Section Profile (with Generate button + persistence)
+# app.py — Streamlit Borehole Section Profile (Generate button + Proposed points)
 import io
 import json
 from typing import Dict, List, Tuple
@@ -18,7 +18,7 @@ from folium.plugins import Draw
 # ── Visual config ────────────────────────────────────────────────────────────
 EXISTING_TEXT_COLOR = "#1e88e5"   # blue
 PROPOSED_TEXT_COLOR = "#e53935"   # red
-CIRCLE_RADIUS_PX    = 10          # dot size (approx for folium)
+CIRCLE_RADIUS_PX    = 10          # dot size (for folium markers)
 CIRCLE_STROKE       = "#ffffff"
 CIRCLE_STROKE_W     = 1
 CIRCLE_FILL_OPACITY = 0.95
@@ -27,30 +27,15 @@ LABEL_DY_PX = -10
 
 # ── FIXED soil colors + ordered legend ───────────────────────────────────────
 SOIL_COLOR_MAP = {
-    "Topsoil": "#ffffcb",
-    "SM": "#76d7c4",
-    "SC-SM": "#fff59d",
-    "CL": "#c5cae9",
-    "PWR": "#808080",
-    "RF": "#929591",
-    "ML": "#ef5350",
-    "CL-ML": "#ef9a9a",
-    "CH": "#64b5f6",
-    "MH": "#ffb74d",
-    "GM": "#aed581",
-    "SC": "#81c784",
-    "Rock": "#f8bbd0",
-    "SM-SC": "#e1bee7",
-    "SP": "#ce93d8",
-    "SW": "#ba68c8",
-    "GW": "#c8e6c9",
-    "SM-ML": "#dcedc8",
-    "CL-CH": "#fff176",
-    "SC-CL": "#ffee58",
+    "Topsoil": "#ffffcb", "SM": "#76d7c4", "SC-SM": "#fff59d", "CL": "#c5cae9",
+    "PWR": "#808080", "RF": "#929591", "ML": "#ef5350", "CL-ML": "#ef9a9a",
+    "CH": "#64b5f6", "MH": "#ffb74d", "GM": "#aed581", "SC": "#81c784",
+    "Rock": "#f8bbd0", "SM-SC": "#e1bee7", "SP": "#ce93d8", "SW": "#ba68c8",
+    "GW": "#c8e6c9", "SM-ML": "#dcedc8", "CL-CH": "#fff176", "SC-CL": "#ffee58",
 }
 ORDERED_SOIL_TYPES = [
-    "Topsoil", "SM", "SC-SM", "CL", "PWR", "RF", "ML", "CL-ML", "CH", "MH", "GM",
-    "SC", "Rock", "SM-SC", "SP", "SW", "GW", "SM-ML", "CL-CH", "SC-CL"
+    "Topsoil","SM","SC-SM","CL","PWR","RF","ML","CL-ML","CH","MH","GM",
+    "SC","Rock","SM-SC","SP","SW","GW","SM-ML","CL-CH","SC-CL"
 ]
 
 # ── Columns + SPT averaging ─────────────────────────────────────────────────
@@ -112,7 +97,7 @@ def load_df_from_excel(uploaded_file) -> pd.DataFrame:
 def make_borehole_coords(df: pd.DataFrame) -> pd.DataFrame:
     return df.groupby('Borehole')[['Latitude','Longitude']].first().reset_index()
 
-# ── Proposed-only loader (optional helper if you add a second upload later) ──
+# ── PROPOSED-only loader (lat/lon/name) ──────────────────────────────────────
 def normalize_cols_general(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
@@ -131,6 +116,18 @@ def normalize_cols_general(df: pd.DataFrame) -> pd.DataFrame:
     df["Latitude"]  = pd.to_numeric(df["Latitude"], errors="coerce")
     df["Longitude"] = pd.to_numeric(df["Longitude"], errors="coerce")
     return df.dropna(subset=["Latitude","Longitude"])[["Latitude","Longitude","Name"]]
+
+@st.cache_data(show_spinner=False)
+def load_first_sheet_bytes(bdata: bytes) -> pd.DataFrame:
+    return pd.read_excel(io.BytesIO(bdata))
+
+@st.cache_data(show_spinner=False)
+def load_proposed_df(uploaded_bytes: bytes) -> pd.DataFrame:
+    try:
+        df = load_first_sheet_bytes(uploaded_bytes)
+        return normalize_cols_general(df)
+    except Exception:
+        return pd.DataFrame(columns=["Latitude","Longitude","Name"])
 
 # ── Section helpers ──────────────────────────────────────────────────────────
 def total_geodesic_length_ft_of_linestring(line: LineString) -> float:
@@ -153,7 +150,7 @@ def chainage_and_offset_ft(line: LineString, lat: float, lon: float) -> Tuple[fl
     off_ft = geodesic((lat, lon), (nearest.y, nearest.x)).feet
     return float(chain_ft), float(off_ft)
 
-# ── Profile plot ─────────────────────────────────────────────────────────────
+# ── Profile plot (stacked rectangles) ────────────────────────────────────────
 def plot_soil_profile_original_style(
     df: pd.DataFrame,
     selected_bhs_ordered: List[str],
@@ -187,7 +184,7 @@ def plot_soil_profile_original_style(
             continue
         x = positions_chainage[bh]
         for elev_from, elev_to, soil_type, spt_label in soil_data_elev[bh]:
-            color = SOIL_COLOR_MAP.get(soil_type, "#cccccc")  # default grey
+            color = SOIL_COLOR_MAP.get(soil_type, "#cccccc")
             if soil_type not in SOIL_COLOR_MAP:
                 unknown_types.add(soil_type)
             ax.add_patch(
@@ -199,8 +196,11 @@ def plot_soil_profile_original_style(
                     edgecolor='black'
                 )
             )
-            ax.text(x, (elev_from + elev_to)/2, f"{soil_type} ({spt_label})",
-                    ha='center', va='center', fontsize=9, weight='bold')
+            ax.text(
+                x, (elev_from + elev_to)/2,
+                f"{soil_type} ({spt_label})",
+                ha='center', va='center', fontsize=9, weight='bold'
+            )
             used_types.add(soil_type)
 
     # Borehole labels at top
@@ -225,11 +225,7 @@ def plot_soil_profile_original_style(
 
     legend_types = [s for s in ORDERED_SOIL_TYPES if s in used_types]
     legend_types += [s for s in sorted(unknown_types) if s not in legend_types]
-
-    legend_patches = [
-        mpatches.Patch(color=SOIL_COLOR_MAP.get(s, "#cccccc"), label=s)
-        for s in legend_types
-    ]
+    legend_patches = [mpatches.Patch(color=SOIL_COLOR_MAP.get(s, "#cccccc"), label=s) for s in legend_types]
     if legend_patches:
         ax.legend(handles=legend_patches, bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10)
 
@@ -326,22 +322,31 @@ except Exception as e:
 
 bh_coords = make_borehole_coords(df)
 
-# Load PROPOSED (optional)
+# Load PROPOSED (red labels on the map)
 proposed_df = pd.DataFrame(columns=["Latitude","Longitude","Name"])
 if prop_file is not None:
-    # If you decide to use proposed points again, call load_proposed_df here.
-    pass
+    proposed_df = load_proposed_df(prop_file.getvalue())
 
-# Center map
+# Center map using both sets (if any proposed)
 pts = [bh_coords[["Latitude","Longitude"]]]
+if not proposed_df.empty:
+    pts.append(proposed_df[["Latitude","Longitude"]])
 all_pts = pd.concat(pts, ignore_index=True)
 center_lat = float(all_pts['Latitude'].mean())
 center_lon = float(all_pts['Longitude'].mean())
 
 # Map and layers
 fmap = make_base_map(center_latlon=(center_lat, center_lon), zoom=13, basemap=basemap_name)
+
+# Existing (blue)
 for _, r in bh_coords.iterrows():
     add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), str(r['Borehole']), EXISTING_TEXT_COLOR)
+
+# Proposed (red), if supplied
+if not proposed_df.empty:
+    for _, r in proposed_df.iterrows():
+        nm = str(r.get("Name","")).strip() or "Proposed"
+        add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm, PROPOSED_TEXT_COLOR)
 
 # Draw tool
 draw = Draw(
@@ -365,7 +370,7 @@ map_out = st_folium(
 )
 
 # Pull a LineString from either 'last_active_drawing' or 'all_drawings'
-def extract_linestring_from_map_out(mo) -> LineString | None:
+def extract_linestring_from_map_out(mo):
     lad = mo.get("last_active_drawing")
     if isinstance(lad, dict):
         geom = lad.get("geometry", {})
@@ -401,7 +406,7 @@ if not go:
     st.info("Click **Generate Soil Profile** to compute the corridor, table, and plot.")
     st.stop()
 
-# Compute corridor selection
+# Compute corridor selection (EXISTING boreholes only)
 def chainage_and_offset_df(bh_coords_df, line: LineString) -> pd.DataFrame:
     rows = []
     for _, r in bh_coords_df.iterrows():
@@ -467,4 +472,4 @@ st.download_button("Download CSV (section_boreholes.csv)", data=csv_bytes, file_
 st.download_button("Download section line (section_line.geojson)", data=gj_bytes, file_name="section_line.geojson", mime="application/geo+json", use_container_width=True)
 st.download_button("Download plot (soil_profile.png)", data=png_bytes, file_name="soil_profile.png", mime="image/png", use_container_width=True)
 
-st.caption("✅ Draw your section, click **Generate Soil Profile**, then download the CSV/GeoJSON/PNG.")
+st.caption("✅ Draw your section, click **Generate Soil Profile**, then download the CSV/GeoJSON/PNG. Proposed points (red) are shown on the map for context.")
