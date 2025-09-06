@@ -1,11 +1,11 @@
-# app.py — Streamlit Borehole Section Profile (Generate button + Proposed points)
+# app.py — Streamlit Borehole Section Profile
+# Interactive Plotly profile (on the web page) + Generate button + Proposed points + downloads
+
 import io
 import json
 from typing import Dict, List, Tuple
 
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 from geopy.distance import geodesic
 from shapely.geometry import LineString, Point
 
@@ -15,17 +15,19 @@ import folium
 from folium import Map, LayerControl
 from folium.plugins import Draw
 
+import plotly.graph_objects as go
+
 # ── Visual config ────────────────────────────────────────────────────────────
 EXISTING_TEXT_COLOR = "#1e88e5"   # blue
 PROPOSED_TEXT_COLOR = "#e53935"   # red
-CIRCLE_RADIUS_PX    = 10          # dot size (for folium markers)
+CIRCLE_RADIUS_PX    = 10          # folium dot
 CIRCLE_STROKE       = "#ffffff"
 CIRCLE_STROKE_W     = 1
 CIRCLE_FILL_OPACITY = 0.95
 LABEL_DX_PX = 8
 LABEL_DY_PX = -10
 
-# ── FIXED soil colors + ordered legend ───────────────────────────────────────
+# Fixed soil colors + legend order
 SOIL_COLOR_MAP = {
     "Topsoil": "#ffffcb", "SM": "#76d7c4", "SC-SM": "#fff59d", "CL": "#c5cae9",
     "PWR": "#808080", "RF": "#929591", "ML": "#ef5350", "CL-ML": "#ef9a9a",
@@ -50,36 +52,30 @@ RENAME_MAP = {
 }
 
 def compute_spt_avg(value):
-    """Return label like 'N = 12.5' from comma-separated SPT list or 'N = N/A'."""
     if value is None:
         return "N = N/A"
     s = str(value).strip()
     if s.upper() == "N/A" or s == "":
         return "N = N/A"
-    try:
-        nums = []
-        for x in s.split(","):
-            x = x.strip().replace('"', '')
-            try:
-                nums.append(float(x))
-            except ValueError:
-                pass
-        return f"N = {round(sum(nums)/len(nums), 2)}" if nums else "N = N/A"
-    except Exception:
-        return "N = N/A"
+    nums = []
+    for x in s.split(","):
+        x = x.strip().replace('"', '')
+        try:
+            nums.append(float(x))
+        except ValueError:
+            pass
+    return f"N = {round(sum(nums)/len(nums), 2)}" if nums else "N = N/A"
 
 @st.cache_data(show_spinner=False)
 def load_df_from_excel(uploaded_file) -> pd.DataFrame:
     df = pd.read_excel(uploaded_file)
     df.columns = df.columns.str.strip()
     df.rename(columns=RENAME_MAP, inplace=True)
-
     # Soil type normalization
     df['Soil_Type'] = df['Soil_Type'].astype(str)
     df['Soil_Type'] = df['Soil_Type'].str.extract(r'\((.*?)\)').fillna(
         df['Soil_Type'].str.replace(r'^.*top\s*soil.*$', 'Topsoil', case=False, regex=True)
     )
-
     # numeric coords
     df['Latitude']  = pd.to_numeric(df['Latitude'],  errors='coerce')
     df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
@@ -97,7 +93,7 @@ def load_df_from_excel(uploaded_file) -> pd.DataFrame:
 def make_borehole_coords(df: pd.DataFrame) -> pd.DataFrame:
     return df.groupby('Borehole')[['Latitude','Longitude']].first().reset_index()
 
-# ── PROPOSED-only loader (lat/lon/name) ──────────────────────────────────────
+# Proposed points helpers
 def normalize_cols_general(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
@@ -150,86 +146,93 @@ def chainage_and_offset_ft(line: LineString, lat: float, lon: float) -> Tuple[fl
     off_ft = geodesic((lat, lon), (nearest.y, nearest.x)).feet
     return float(chain_ft), float(off_ft)
 
-# ── Profile plot (stacked rectangles) ────────────────────────────────────────
-def plot_soil_profile_original_style(
+# ── Interactive Plotly profile ───────────────────────────────────────────────
+def build_plotly_profile(
     df: pd.DataFrame,
     selected_bhs_ordered: List[str],
     positions_chainage: Dict[str, float],
-    y_min: float = 900,
-    y_max: float = 1060,
-    title: str = "Soil Profile",
-    figsize: Tuple[float, float] = (100, 20)
-):
-    soil_data_elev = {}
+    y_min: float,
+    y_max: float,
+    title: str,
+    fig_height_px: int = 900,
+    column_width: float = 60.0
+) -> go.Figure:
+    """Create a Plotly figure with rectangle shapes and text annotations."""
+    half = column_width / 2
+    shapes = []
+    annotations = []
+    used_types = set()
+    unknown_types = set()
+
+    # Collect layer rectangles + labels
     for bh in selected_bhs_ordered:
         bore_data = df[df['Borehole'] == bh]
         if bore_data.empty:
             continue
-        soil_data_elev[bh] = list(zip(
-            bore_data['Elevation_From'],
-            bore_data['Elevation_To'],
-            bore_data['Soil_Type'],
-            bore_data['SPT_Label'],
-        ))
-
-    fig, ax = plt.subplots(figsize=figsize)
-    column_width = 60
-    half_width = column_width / 2
-
-    used_types = set()
-    unknown_types = set()
-
-    for bh in selected_bhs_ordered:
-        if bh not in soil_data_elev:
-            continue
         x = positions_chainage[bh]
-        for elev_from, elev_to, soil_type, spt_label in soil_data_elev[bh]:
+        top_elev = bore_data['Elevation_From'].max()
+        # Borehole label above
+        annotations.append(dict(
+            x=x, y=top_elev + 3, text=str(bh),
+            showarrow=False, xanchor="center", yanchor="bottom",
+            font=dict(size=12, color="#111", family="Arial Black")
+        ))
+        for _, row in bore_data.iterrows():
+            elev_from = float(row['Elevation_From'])
+            elev_to   = float(row['Elevation_To'])
+            soil_type = str(row['Soil_Type'])
+            spt_label = str(row['SPT_Label'])
             color = SOIL_COLOR_MAP.get(soil_type, "#cccccc")
             if soil_type not in SOIL_COLOR_MAP:
                 unknown_types.add(soil_type)
-            ax.add_patch(
-                mpatches.Rectangle(
-                    (x - half_width, elev_to),
-                    column_width,
-                    elev_from - elev_to,
-                    facecolor=color,
-                    edgecolor='black'
-                )
-            )
-            ax.text(
-                x, (elev_from + elev_to)/2,
-                f"{soil_type} ({spt_label})",
-                ha='center', va='center', fontsize=9, weight='bold'
-            )
             used_types.add(soil_type)
 
-    # Borehole labels at top
-    for bh in selected_bhs_ordered:
-        if bh not in soil_data_elev:
-            continue
-        x = positions_chainage[bh]
-        top_elev = max(e[0] for e in soil_data_elev[bh])
-        ax.text(x, top_elev + 3, bh, ha='center', va='bottom', fontsize=10, fontweight='bold')
+            # rectangle
+            shapes.append(dict(
+                type="rect",
+                x0=x - half, x1=x + half,
+                y0=elev_to, y1=elev_from,
+                line=dict(color="#000000", width=1),
+                fillcolor=color
+            ))
+            # label inside layer
+            annotations.append(dict(
+                x=x, y=(elev_from + elev_to)/2,
+                text=f"{soil_type} ({spt_label})",
+                showarrow=False,
+                xanchor="center", yanchor="middle",
+                font=dict(size=10, color="#111", family="Arial")
+            ))
 
-    ax.set_ylim(y_min, y_max)
-    if positions_chainage:
-        xmin = min(positions_chainage.values()) - half_width
-        xmax = max(positions_chainage.values()) + 15*half_width
-    else:
-        xmin, xmax = -half_width, half_width
-    ax.set_xlim(xmin, xmax)
+    # Build figure
+    fig = go.Figure()
 
-    ax.set_xlabel("Chainage along section (ft)", fontsize=16)
-    ax.set_ylabel("Elevation (ft)", fontsize=16)
-    ax.set_title(title, fontsize=18)
-
+    # Legend (dummy traces for used soil types in fixed order)
     legend_types = [s for s in ORDERED_SOIL_TYPES if s in used_types]
     legend_types += [s for s in sorted(unknown_types) if s not in legend_types]
-    legend_patches = [mpatches.Patch(color=SOIL_COLOR_MAP.get(s, "#cccccc"), label=s) for s in legend_types]
-    if legend_patches:
-        ax.legend(handles=legend_patches, bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10)
+    for soil in legend_types:
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers",
+            marker=dict(size=12, color=SOIL_COLOR_MAP.get(soil, "#cccccc")),
+            name=soil, showlegend=True
+        ))
 
-    fig.tight_layout()
+    xmin = (min(positions_chainage.values()) - half) if positions_chainage else -half
+    xmax = (max(positions_chainage.values()) + 15*half) if positions_chainage else half
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Chainage along section (ft)",
+        yaxis_title="Elevation (ft)",
+        shapes=shapes,
+        annotations=annotations,
+        height=fig_height_px,
+        margin=dict(l=60, r=260, t=60, b=60),
+        plot_bgcolor="white",
+        legend=dict(yanchor="top", y=1, xanchor="left", x=1.02, bordercolor="#ddd", borderwidth=1)
+    )
+    fig.update_xaxes(range=[xmin, xmax], showgrid=True, gridcolor="#eee")
+    fig.update_yaxes(range=[y_min, y_max], showgrid=True, gridcolor="#eee")
     return fig
 
 # ── Map helpers ──────────────────────────────────────────────────────────────
@@ -243,7 +246,6 @@ def add_labeled_point(fmap: folium.Map, lat: float, lon: float, name: str, text_
         fill_color=text_color,
         fill_opacity=CIRCLE_FILL_OPACITY,
     ).add_to(fmap)
-
     label_html = (
         f"<div style='background:transparent;border:none;box-shadow:none;"
         f"pointer-events:none; padding:0; margin:0;"
@@ -276,10 +278,37 @@ corridor_ft = st.sidebar.number_input("Corridor (ft)", min_value=10.0, step=10.0
 ymin = st.sidebar.number_input("Y min (ft)", value=900.0)
 ymax = st.sidebar.number_input("Y max (ft)", value=1060.0)
 title = st.sidebar.text_input("Plot Title", value="Soil Profile")
-figw = st.sidebar.number_input("Figure width (in)", value=100.0, step=5.0)
-figh = st.sidebar.number_input("Figure height (in)", value=20.0, step=1.0)
+figw_in = st.sidebar.number_input("Figure width (in) – ignored for web", value=100.0, step=5.0)
+figh_in = st.sidebar.number_input("Figure height (in)", value=20.0, step=1.0)
 
-def make_base_map(center_latlon=(39.0, -104.9), zoom=13, basemap="Esri Satellite") -> folium.Map:
+if main_file is None:
+    st.info("Upload your MAIN borehole Excel to begin. Optional: also upload PROPOSED.xlsx.")
+    st.stop()
+
+# Load data
+try:
+    df = load_df_from_excel(main_file)
+except Exception as e:
+    st.error(f"Failed to read MAIN Excel: {e}")
+    st.stop()
+
+bh_coords = make_borehole_coords(df)
+
+# Proposed
+proposed_df = pd.DataFrame(columns=["Latitude","Longitude","Name"])
+if prop_file is not None:
+    proposed_df = load_proposed_df(prop_file.getvalue())
+
+# Center map
+pts = [bh_coords[["Latitude","Longitude"]]]
+if not proposed_df.empty:
+    pts.append(proposed_df[["Latitude","Longitude"]])
+all_pts = pd.concat(pts, ignore_index=True)
+center_lat = float(all_pts['Latitude'].mean())
+center_lon = float(all_pts['Longitude'].mean())
+
+# Map + draw
+def make_base_map(center_latlon=(39.0, -104.9), zoom=13) -> folium.Map:
     fmap = Map(location=center_latlon, zoom_start=zoom, control_scale=True)
     tiles = {
         "OpenStreetMap": "OpenStreetMap",
@@ -303,60 +332,28 @@ def make_base_map(center_latlon=(39.0, -104.9), zoom=13, basemap="Esri Satellite
     }
     for name, url in tiles.items():
         if name == "NASA Night":
-            folium.raster_layers.TileLayer(tiles=url, name=name, attr=attr[name], overlay=False, control=True, **{"time": "2012-01-01", "tilematrixset": "GoogleMapsCompatible", "maxZoom": 8}).add_to(fmap)
+            folium.raster_layers.TileLayer(tiles=url, name=name, attr=attr[name], overlay=False, control=True,
+                                           **{"time": "2012-01-01", "tilematrixset": "GoogleMapsCompatible", "maxZoom": 8}).add_to(fmap)
         else:
             folium.raster_layers.TileLayer(tiles=url, name=name, attr=attr[name], overlay=False, control=True).add_to(fmap)
     LayerControl(position='topright').add_to(fmap)
     return fmap
 
-if main_file is None:
-    st.info("Upload your MAIN borehole Excel to begin. Optional: also upload a PROPOSED.xlsx with lat/lon/name.")
-    st.stop()
-
-# Load MAIN
-try:
-    df = load_df_from_excel(main_file)
-except Exception as e:
-    st.error(f"Failed to read MAIN Excel: {e}")
-    st.stop()
-
-bh_coords = make_borehole_coords(df)
-
-# Load PROPOSED (red labels on the map)
-proposed_df = pd.DataFrame(columns=["Latitude","Longitude","Name"])
-if prop_file is not None:
-    proposed_df = load_proposed_df(prop_file.getvalue())
-
-# Center map using both sets (if any proposed)
-pts = [bh_coords[["Latitude","Longitude"]]]
-if not proposed_df.empty:
-    pts.append(proposed_df[["Latitude","Longitude"]])
-all_pts = pd.concat(pts, ignore_index=True)
-center_lat = float(all_pts['Latitude'].mean())
-center_lon = float(all_pts['Longitude'].mean())
-
-# Map and layers
-fmap = make_base_map(center_latlon=(center_lat, center_lon), zoom=13, basemap=basemap_name)
+fmap = make_base_map(center_latlon=(center_lat, center_lon), zoom=13)
 
 # Existing (blue)
 for _, r in bh_coords.iterrows():
     add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), str(r['Borehole']), EXISTING_TEXT_COLOR)
-
-# Proposed (red), if supplied
+# Proposed (red)
 if not proposed_df.empty:
     for _, r in proposed_df.iterrows():
         nm = str(r.get("Name","")).strip() or "Proposed"
         add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm, PROPOSED_TEXT_COLOR)
 
-# Draw tool
 draw = Draw(
     draw_options={
         "polyline": {"shapeOptions": {"color": "#3388ff", "weight": 4}},
-        "polygon": False,
-        "circle": False,
-        "rectangle": False,
-        "marker": False,
-        "circlemarker": False,
+        "polygon": False, "circle": False, "rectangle": False, "marker": False, "circlemarker": False,
     },
     edit_options={"edit": True, "remove": True},
 )
@@ -369,7 +366,7 @@ map_out = st_folium(
     key="section_map"
 )
 
-# Pull a LineString from either 'last_active_drawing' or 'all_drawings'
+# Extract section line (persist across reruns)
 def extract_linestring_from_map_out(mo):
     lad = mo.get("last_active_drawing")
     if isinstance(lad, dict):
@@ -383,7 +380,6 @@ def extract_linestring_from_map_out(mo):
                 return LineString(geom["coordinates"])
     return None
 
-# Persist the last valid section in session_state
 if "section_line_coords" not in st.session_state:
     st.session_state["section_line_coords"] = None
 
@@ -391,18 +387,16 @@ maybe_line = extract_linestring_from_map_out(map_out or {})
 if maybe_line is not None:
     st.session_state["section_line_coords"] = list(map(list, maybe_line.coords))
 
-# Controls
 st.subheader("Generate Soil Profile")
-go = st.button("Generate Soil Profile", type="primary")
+go_btn = st.button("Generate Soil Profile", type="primary")
 
 if not st.session_state["section_line_coords"]:
     st.info("Draw a polyline on the map, then click **Generate Soil Profile**.")
     st.stop()
 
-# Rebuild LineString from session_state when button is pressed
-last_line = LineString(st.session_state["section_line_coords"])
+section_line = LineString(st.session_state["section_line_coords"])
 
-if not go:
+if not go_btn:
     st.info("Click **Generate Soil Profile** to compute the corridor, table, and plot.")
     st.stop()
 
@@ -420,7 +414,7 @@ def chainage_and_offset_df(bh_coords_df, line: LineString) -> pd.DataFrame:
         })
     return pd.DataFrame(rows)
 
-report = chainage_and_offset_df(bh_coords, last_line)
+report = chainage_and_offset_df(bh_coords, section_line)
 sel = report[report["Offset_ft"] <= float(corridor_ft)].copy()
 sel.sort_values(by=["Chainage_ft", "Borehole"], inplace=True)
 sel.reset_index(drop=True, inplace=True)
@@ -435,31 +429,25 @@ st.dataframe(sel, use_container_width=True)
 positions_chainage = {bh: ch for bh, ch in sel[["Borehole","Chainage_ft"]].itertuples(index=False)}
 selected_bhs_ordered = sel['Borehole'].tolist()
 
-# Plot
-try:
-    fig = plot_soil_profile_original_style(
-        df=df[df['Borehole'].isin(selected_bhs_ordered)],
-        selected_bhs_ordered=selected_bhs_ordered,
-        positions_chainage=positions_chainage,
-        y_min=float(ymin),
-        y_max=float(ymax),
-        title=title,
-        figsize=(float(figw), float(figh))
-    )
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
-    buf.seek(0)
-    png_bytes = buf.getvalue()
-    st.pyplot(fig)
-    plt.close(fig)
-except Exception as e:
-    st.error(f"Plot failed: {e}")
-    st.stop()
+# Interactive profile on the page
+fig_height_px = int(figh_in * 50)  # rough scaling inches→pixels
+plot_df = df[df['Borehole'].isin(selected_bhs_ordered)]
+fig = build_plotly_profile(
+    df=plot_df,
+    selected_bhs_ordered=selected_bhs_ordered,
+    positions_chainage=positions_chainage,
+    y_min=float(ymin),
+    y_max=float(ymax),
+    title=title,
+    fig_height_px=fig_height_px
+)
+st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
 
-# Downloads
+# Downloads (CSV, GeoJSON, PNG of Plotly figure via kaleido)
 csv_buf = io.StringIO()
 sel.to_csv(csv_buf, index=False)
 csv_bytes = csv_buf.getvalue().encode("utf-8")
+st.download_button("Download CSV (section_boreholes.csv)", data=csv_bytes, file_name="section_boreholes.csv", mime="text/csv", use_container_width=True)
 
 gj = {
     "type": "Feature",
@@ -467,9 +455,11 @@ gj = {
     "geometry": {"type": "LineString", "coordinates": st.session_state['section_line_coords']}
 }
 gj_bytes = json.dumps(gj, indent=2).encode("utf-8")
-
-st.download_button("Download CSV (section_boreholes.csv)", data=csv_bytes, file_name="section_boreholes.csv", mime="text/csv", use_container_width=True)
 st.download_button("Download section line (section_line.geojson)", data=gj_bytes, file_name="section_line.geojson", mime="application/geo+json", use_container_width=True)
-st.download_button("Download plot (soil_profile.png)", data=png_bytes, file_name="soil_profile.png", mime="image/png", use_container_width=True)
 
-st.caption("✅ Draw your section, click **Generate Soil Profile**, then download the CSV/GeoJSON/PNG. Proposed points (red) are shown on the map for context.")
+try:
+    # requires kaleido in requirements
+    png_bytes = fig.to_image(format="png", scale=2)
+    st.download_button("Download plot (soil_profile.png)", data=png_bytes, file_name="soil_profile.png", mime="image/png", use_container_width=True)
+except Exception:
+    st.info("PNG export needs the 'kaleido' package. Add it to requirements.txt if you want the PNG download.")
