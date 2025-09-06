@@ -1,5 +1,4 @@
-# app.py — Auto-generate 2D & 3D section profiles (no buttons)
-# Layout: 1) Map with Bore Logs → 2) Section/Profile heading + Corridor slider → 3) 2D profile → 4) 3D profile
+# app.py — Auto 2D + 3D (plan) profiles with vertical exaggeration
 
 from typing import Dict, List, Tuple
 import io
@@ -24,13 +23,13 @@ CIRCLE_STROKE_W     = 1
 CIRCLE_FILL_OPACITY = 0.95
 LABEL_DX_PX, LABEL_DY_PX = 8, -10
 
-# Default profile settings (kept internal; no extra UI)
+# Default profile settings (internal)
 Y_MIN_DEFAULT = 900.0
 Y_MAX_DEFAULT = 1060.0
 TITLE_DEFAULT = "Soil Profile"
-FIG_HEIGHT_IN = 20.0  # ~inches→pixels using *50
+FIG_HEIGHT_IN = 20.0  # ~in→px: *50
 
-# Fixed soil colors + legend order
+# Soil colors + legend order
 SOIL_COLOR_MAP = {
     "Topsoil": "#ffffcb","SM": "#76d7c4","SC-SM": "#fff59d","CL": "#c5cae9","PWR": "#808080",
     "RF": "#929591","ML": "#ef5350","CL-ML": "#ef9a9a","CH": "#64b5f6","MH": "#ffb74d","GM": "#aed581",
@@ -135,6 +134,15 @@ def chainage_and_offset_ft(line: LineString, lat: float, lon: float) -> Tuple[fl
     off_ft = geodesic((lat, lon), (nearest.y, nearest.x)).feet
     return float(chain_ft), float(off_ft)
 
+# Lat/Lon → local plan coordinates (ft), origin at (lat0,lon0)
+def latlon_to_local_xy_ft(lat: float, lon: float, lat0: float, lon0: float) -> Tuple[float, float]:
+    # Easting (x): distance along latitude circle; Northing (y): meridian distance
+    x_m = geodesic((lat0, lon0), (lat0, lon)).meters
+    y_m = geodesic((lat0, lon0), (lat,  lon0)).meters
+    x = x_m * 3.28084 * (1 if lon >= lon0 else -1)
+    y = y_m * 3.28084 * (1 if lat >= lat0 else -1)
+    return x, y
+
 # ── 2D profile builder ───────────────────────────────────────────────────────
 def build_plotly_profile(
     df: pd.DataFrame, ordered_bhs: List[str], x_positions: Dict[str,float],
@@ -189,62 +197,62 @@ def build_plotly_profile(
     fig.update_yaxes(range=[y_min, y_max], showgrid=True, gridcolor="#eee")
     return fig
 
-# ── 3D profile builder ───────────────────────────────────────────────────────
-def build_3d_profile(
+# ── 3D profile (PLAN COORDS) builder ────────────────────────────────────────
+def build_3d_profile_plan(
     df: pd.DataFrame,
     selected_bhs: List[str],
-    positions_chainage: Dict[str, float],
+    xy_ft: Dict[str, Tuple[float,float]],
     y_min: float,
     y_max: float,
     title: str,
-    column_width: float = 60.0,
-    row_gap: float = 1.2,
-    col_half_override: float | None = None,
+    column_width_ft: float = 60.0,
+    vert_exag: float = 1.0,
 ) -> go.Figure:
     """
-    Interactive 3D profile using Mesh3d.
-    x → chainage (ft), y → borehole index (spaced by row_gap), z → elevation (ft).
-    Each soil layer becomes a thin cuboid colored by SOIL_COLOR_MAP.
+    Interactive 3D profile in PLAN coordinates (local feet).
+    x = Easting (ft), y = Northing (ft), z = Elevation (ft) with vertical exaggeration.
+    Each soil layer is a thin cuboid colored by SOIL_COLOR_MAP.
     """
-    half = (col_half_override if col_half_override is not None else column_width/2.0)
+    half = column_width_ft / 2.0
+
+    # Global datum for "display-only" vertical exaggeration
+    z0 = float(df['Elevation_To'].min() if not df.empty else 0.0)
+    def z_scale(z):  # z' = z0 + (z - z0) * VE
+        return z0 + (z - z0) * vert_exag
 
     meshes: list[go.Mesh3d] = []
-    used_types = set()
-    unknown_types = set()
+    used_types, unknown_types = set(), set()
 
-    # Borehole label anchors
+    # Label anchors
     label_x, label_y, label_z, label_text = [], [], [], []
 
-    for idx, bh in enumerate(selected_bhs):
+    for bh in selected_bhs:
         bore = df[df['Borehole'] == bh]
-        if bore.empty:
+        if bore.empty or bh not in xy_ft:
             continue
-        x_center = float(positions_chainage.get(bh, 0.0))
-        y_center = idx * row_gap
+        x_center, y_center = xy_ft[bh]
         x0, x1 = x_center - half, x_center + half
-        y0, y1 = y_center - 0.5, y_center + 0.5
+        y0, y1 = y_center - half, y_center + half
 
-        # Borehole label above top elevation
         top_el = float(bore['Elevation_From'].max())
         label_x.append(x_center)
         label_y.append(y_center)
-        label_z.append(top_el + 3)
+        label_z.append(z_scale(top_el) + 3)  # text above
         label_text.append(str(bh))
 
         for _, r in bore.iterrows():
-            z0 = float(r['Elevation_To'])
-            z1 = float(r['Elevation_From'])
+            z_bot = z_scale(float(r['Elevation_To']))
+            z_top = z_scale(float(r['Elevation_From']))
             soil = str(r['Soil_Type'])
             color = SOIL_COLOR_MAP.get(soil, '#cccccc')
             if soil not in SOIL_COLOR_MAP:
                 unknown_types.add(soil)
             used_types.add(soil)
 
-            # 8 cuboid vertices
+            # cuboid vertices
             xs = [x0, x1, x1, x0, x0, x1, x1, x0]
             ys = [y0, y0, y1, y1, y0, y0, y1, y1]
-            zs = [z0, z0, z0, z0, z1, z1, z1, z1]
-            # 12 triangles
+            zs = [z_bot, z_bot, z_bot, z_bot, z_top, z_top, z_top, z_top]
             i = [0, 0, 4, 4, 0, 0, 1, 1, 2, 2, 3, 3]
             j = [1, 2, 5, 6, 1, 5, 2, 6, 3, 7, 0, 4]
             k = [2, 3, 6, 7, 5, 4, 6, 5, 7, 6, 4, 7]
@@ -252,17 +260,15 @@ def build_3d_profile(
             meshes.append(go.Mesh3d(
                 x=xs, y=ys, z=zs,
                 i=i, j=j, k=k,
-                color=color,
-                opacity=0.96,
+                color=color, opacity=0.96,
                 flatshading=True,
                 lighting=dict(ambient=0.6, diffuse=0.6),
-                hoverinfo='skip',
-                showlegend=False,
+                hoverinfo='skip', showlegend=False
             ))
 
     fig = go.Figure(data=meshes)
 
-    # Legend as dummy points following fixed order
+    # Legend (dummy traces)
     legend_types = [s for s in ORDERED_SOIL_TYPES if s in used_types]
     legend_types += [s for s in sorted(unknown_types) if s not in legend_types]
     for soil in legend_types:
@@ -270,25 +276,25 @@ def build_3d_profile(
                                    marker=dict(size=8, color=SOIL_COLOR_MAP.get(soil, '#ccc')),
                                    name=soil, showlegend=True))
 
-    # Borehole name annotations
     if label_text:
         fig.add_trace(go.Scatter3d(
             x=label_x, y=label_y, z=label_z,
             mode='text', text=label_text,
-            textposition='top center',
-            showlegend=False,
+            textposition='top center', showlegend=False
         ))
 
+    zmin_s, zmax_s = z_scale(y_min), z_scale(y_max)
     fig.update_layout(
-        title=f"{title} — 3D",
+        title=f"{title} — 3D (Plan Coordinates)",
         scene=dict(
-            xaxis=dict(title='Chainage (ft)', backgroundcolor='white', gridcolor='#eee'),
-            yaxis=dict(title='Borehole index', backgroundcolor='white', gridcolor='#eee'),
-            zaxis=dict(title='Elevation (ft)', range=[y_min, y_max], backgroundcolor='white', gridcolor='#eee'),
+            xaxis=dict(title='Easting (ft, local)', backgroundcolor='white', gridcolor='#eee'),
+            yaxis=dict(title='Northing (ft, local)', backgroundcolor='white', gridcolor='#eee'),
+            zaxis=dict(title=f'Elevation (ft, VE×{vert_exag:.2f})', range=[zmin_s, zmax_s],
+                       backgroundcolor='white', gridcolor='#eee'),
             aspectmode='data',
             camera=dict(eye=dict(x=1.4, y=1.2, z=0.8))
         ),
-        height=750,
+        height=780,
         margin=dict(l=40, r=260, t=60, b=40),
         legend=dict(yanchor='top', y=1, xanchor='left', x=1.02, bordercolor='#ddd', borderwidth=1)
     )
@@ -402,7 +408,7 @@ if not st.session_state["section_line_coords"]:
 
 section_line = LineString(st.session_state["section_line_coords"])
 
-# Select boreholes within corridor
+# Select boreholes within corridor (for 2D) and keep a list for 3D (toggle later)
 rows = []
 for _, r in bh_coords.iterrows():
     ch, off = chainage_and_offset_ft(section_line, float(r['Latitude']), float(r['Longitude']))
@@ -416,7 +422,7 @@ if not rows:
 ordered_bhs = [r["Borehole"] for r in sorted(rows, key=lambda x: (x["Chainage_ft"], x["Borehole"]))]
 xpos = {r["Borehole"]: r["Chainage_ft"] for r in rows}
 
-# ── 3) Interactive 2D profile ───────────────────────────────────────────────
+# ── 3) Interactive 2D profile (chainage) ────────────────────────────────────
 fig_height_px = int(FIG_HEIGHT_IN * 50)
 plot_df = df[df['Borehole'].isin(ordered_bhs)]
 fig2d = build_plotly_profile(
@@ -426,13 +432,39 @@ fig2d = build_plotly_profile(
 )
 st.plotly_chart(fig2d, use_container_width=True, config={"displaylogo": False})
 
-# ── 4) Interactive 3D profile ───────────────────────────────────────────────
-fig3d = build_3d_profile(
-    df=plot_df,
-    selected_bhs=ordered_bhs,
-    positions_chainage=xpos,
+# ── 4) Interactive 3D Borehole View (PLAN COORDS) ───────────────────────────
+st.markdown("### 3D Borehole View (ft, Plan Coordinates)")
+left, right = st.columns([1, 3])
+with left:
+    limit_to_corridor = st.checkbox("Limit to section corridor", value=True)
+with right:
+    vert_exag = st.slider("Vertical exaggeration (display only)", 0.5, 10.0, 2.0, 0.1)
+
+# choose which BHs for 3D
+if limit_to_corridor:
+    bhs_for_3d = ordered_bhs
+else:
+    # all boreholes that have layers in df
+    bhs_for_3d = [bh for bh in bh_coords['Borehole'].tolist() if (df['Borehole'] == bh).any()]
+
+# local origin at mean lat/lon of selected BHs
+sel_coords = bh_coords[bh_coords['Borehole'].isin(bhs_for_3d)]
+lat0 = float(sel_coords['Latitude'].mean())
+lon0 = float(sel_coords['Longitude'].mean())
+xy_map = {
+    row['Borehole']: latlon_to_local_xy_ft(float(row['Latitude']), float(row['Longitude']), lat0, lon0)
+    for _, row in sel_coords.iterrows()
+}
+
+plot_df3d = df[df['Borehole'].isin(bhs_for_3d)]
+fig3d = build_3d_profile_plan(
+    df=plot_df3d,
+    selected_bhs=bhs_for_3d,
+    xy_ft=xy_map,
     y_min=Y_MIN_DEFAULT,
     y_max=Y_MAX_DEFAULT,
     title=TITLE_DEFAULT,
+    column_width_ft=60.0,
+    vert_exag=vert_exag,
 )
 st.plotly_chart(fig3d, use_container_width=True, config={"displaylogo": False})
