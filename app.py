@@ -1,6 +1,7 @@
-# app.py — Auto-generate interactive profile, only "Corridor width (ft)" slider on page
+# app.py — Auto-generate interactive profile
+# Layout: 1) Map with Bore Logs → 2) Section/Profile heading + Corridor slider → 3) Interactive profile
+
 import io
-import json
 from typing import Dict, List, Tuple
 
 import pandas as pd
@@ -23,11 +24,11 @@ CIRCLE_STROKE_W     = 1
 CIRCLE_FILL_OPACITY = 0.95
 LABEL_DX_PX, LABEL_DY_PX = 8, -10
 
-# Default plot settings (kept internal; no UI needed)
+# Default profile settings (kept internal; no UI)
 Y_MIN_DEFAULT = 900.0
 Y_MAX_DEFAULT = 1060.0
 TITLE_DEFAULT = "Soil Profile"
-FIG_HEIGHT_IN = 20.0  # roughly * 50 → px
+FIG_HEIGHT_IN = 20.0  # x≈50 → px
 
 # Fixed soil colors + legend order
 SOIL_COLOR_MAP = {
@@ -55,8 +56,10 @@ def compute_spt_avg(value):
     nums = []
     for x in s.split(","):
         x = x.strip().replace('"','')
-        try: nums.append(float(x))
-        except ValueError: pass
+        try:
+            nums.append(float(x))
+        except ValueError:
+            pass
     return f"N = {round(sum(nums)/len(nums), 2)}" if nums else "N = N/A"
 
 @st.cache_data(show_spinner=False)
@@ -202,18 +205,15 @@ def add_labeled_point(fmap: folium.Map, lat: float, lon: float, name: str, color
 
 # ── UI ───────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Borehole Section Profile", layout="wide")
-st.title("Section / Profile (ft) — Soil")
 
-# Sidebar = uploads only (no other settings)
+# Sidebar = uploads only
 st.sidebar.header("Upload")
 main_file = st.sidebar.file_uploader("MAIN borehole Excel (Elevations/Soils/SPT)", type=["xlsx","xls"])
 prop_file = st.sidebar.file_uploader("Optional PROPOSED.xlsx (lat/lon/name)", type=["xlsx","xls"])
 
-# Corridor slider on the PAGE (like your screenshot)
-corridor_ft = st.slider("Corridor width (ft)", min_value=50, max_value=1000, value=200, step=10)
-
 if main_file is None:
-    st.info("Upload the MAIN Excel to begin. Draw a polyline to see the profile update automatically.")
+    st.title("Map with Bore Logs")
+    st.info("Upload the MAIN Excel to begin.")
     st.stop()
 
 # Load data
@@ -223,7 +223,10 @@ proposed_df = pd.DataFrame(columns=["Latitude","Longitude","Name"])
 if prop_file is not None:
     proposed_df = load_proposed_df(prop_file.getvalue())
 
-# Build map (Esri Satellite default)
+# ── 1) Map with Bore Logs ───────────────────────────────────────────────────
+st.title("Map with Bore Logs")
+
+# Center map
 center_lat = float(pd.concat(
     [bh_coords[['Latitude']], proposed_df[['Latitude']] if not proposed_df.empty else bh_coords[['Latitude']]],
     ignore_index=True)['Latitude'].mean()
@@ -232,15 +235,17 @@ center_lon = float(pd.concat(
     [bh_coords[['Longitude']], proposed_df[['Longitude']] if not proposed_df.empty else bh_coords[['Longitude']]],
     ignore_index=True)['Longitude'].mean()
 )
+
 fmap = Map(location=(center_lat, center_lon), zoom_start=13, control_scale=True)
-# basemap layers
+
+# Esri Satellite basemap
 folium.raster_layers.TileLayer(
     tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     name="Esri Satellite", attr="Tiles © Esri", overlay=False, control=True
 ).add_to(fmap)
 LayerControl(position='topright').add_to(fmap)
 
-# points
+# Borehole points (blue) + Proposed (red)
 for _, r in bh_coords.iterrows():
     add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), str(r['Borehole']), EXISTING_TEXT_COLOR)
 if not proposed_df.empty:
@@ -248,20 +253,19 @@ if not proposed_df.empty:
         name = str(r.get("Name","")).strip() or "Proposed"
         add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), name, PROPOSED_TEXT_COLOR)
 
-# draw tool
+# Draw tool
 Draw(
     draw_options={"polyline":{"shapeOptions":{"color":"#3388ff","weight":4}},
                   "polygon":False,"circle":False,"rectangle":False,"marker":False,"circlemarker":False},
     edit_options={"edit":True,"remove":True}
 ).add_to(fmap)
 
-# show map and collect drawings
 map_out = st_folium(
     fmap, height=600, use_container_width=True,
     returned_objects=["last_active_drawing","all_drawings"], key="map"
 )
 
-# get last drawn LineString (auto-trigger)
+# Extract latest LineString and persist
 def extract_linestring(mo) -> LineString | None:
     lad = mo.get("last_active_drawing")
     if isinstance(lad, dict):
@@ -282,14 +286,18 @@ maybe_line = extract_linestring(map_out or {})
 if maybe_line is not None:
     st.session_state["section_line_coords"] = list(map(list, maybe_line.coords))
 
-# if we have a line, auto-generate; otherwise show hint
+# ── 2) Section / Profile heading + Corridor slider ──────────────────────────
+st.title("Section / Profile (ft) — Soil")
+corridor_ft = st.slider("Corridor width (ft)", min_value=50, max_value=1000, value=200, step=10)
+
+# Auto-generate only when a line exists
 if not st.session_state["section_line_coords"]:
-    st.info("Draw a polyline (double-click to finish). The profile will appear automatically.")
+    st.info("Draw a polyline on the map (double-click to finish). The profile will appear below automatically.")
     st.stop()
 
 section_line = LineString(st.session_state["section_line_coords"])
 
-# compute chainage & offset; select within corridor
+# Select boreholes within corridor
 rows = []
 for _, r in bh_coords.iterrows():
     ch, off = chainage_and_offset_ft(section_line, float(r['Latitude']), float(r['Longitude']))
@@ -300,14 +308,14 @@ if not rows:
     st.warning(f"No EXISTING boreholes within {corridor_ft:.0f} ft of the drawn section.")
     st.stop()
 
-sel_ordered = [r["Borehole"] for r in sorted(rows, key=lambda x: (x["Chainage_ft"], x["Borehole"]))]
+ordered_bhs = [r["Borehole"] for r in sorted(rows, key=lambda x: (x["Chainage_ft"], x["Borehole"]))]
 xpos = {r["Borehole"]: r["Chainage_ft"] for r in rows}
 
-# build interactive profile (directly on page)
+# ── 3) Interactive profile ──────────────────────────────────────────────────
 fig_height_px = int(FIG_HEIGHT_IN * 50)
-plot_df = df[df['Borehole'].isin(sel_ordered)]
+plot_df = df[df['Borehole'].isin(ordered_bhs)]
 fig = build_plotly_profile(
-    plot_df, sel_ordered, xpos,
+    df=plot_df, ordered_bhs=ordered_bhs, x_positions=xpos,
     y_min=Y_MIN_DEFAULT, y_max=Y_MAX_DEFAULT, title=TITLE_DEFAULT,
     fig_height_px=fig_height_px
 )
