@@ -1,4 +1,4 @@
-# app.py — Streamlit Borehole Section Profile (corrected & complete)
+# app.py — Streamlit Borehole Section Profile (with Generate button + persistence)
 import io
 import json
 from typing import Dict, List, Tuple
@@ -65,7 +65,6 @@ RENAME_MAP = {
 }
 
 def compute_spt_avg(value):
-    """Return label like 'N = 12.5' from comma-separated SPT list or 'N = N/A'."""
     if value is None:
         return "N = N/A"
     s = str(value).strip()
@@ -374,26 +373,50 @@ draw = Draw(
 )
 draw.add_to(fmap)
 
-st.subheader("Map – draw your section (double-click to finish)")
-map_out = st_folium(fmap, height=600, use_container_width=True, returned_objects=["all_drawings"])
+st.subheader("Map – draw your section (double‑click to finish)")
+map_out = st_folium(
+    fmap, height=600, use_container_width=True,
+    returned_objects=["all_drawings", "last_active_drawing"],
+    key="section_map"
+)
 
-# Extract the last LineString from the draw control output
-last_line = None
-features = []
-if map_out and map_out.get("all_drawings"):
-    features = map_out["all_drawings"]["features"] if isinstance(map_out["all_drawings"], dict) else []
-for feat in reversed(features):
-    geom = feat.get("geometry", {})
-    if geom.get("type") == "LineString":
-        coords = geom.get("coordinates", [])  # GeoJSON: [lon, lat]
-        if len(coords) >= 2:
-            last_line = LineString(coords)
-            break
+# Pull a LineString from either 'last_active_drawing' or 'all_drawings'
+def extract_linestring_from_map_out(mo) -> LineString | None:
+    # Prefer the last active drawing (works on newer streamlit-folium)
+    lad = mo.get("last_active_drawing")
+    if isinstance(lad, dict):
+        geom = lad.get("geometry", {})
+        if geom.get("type") == "LineString" and len(geom.get("coordinates", [])) >= 2:
+            return LineString(geom["coordinates"])
+    # Fallback to all_drawings
+    if mo.get("all_drawings") and isinstance(mo["all_drawings"], dict):
+        for feat in reversed(mo["all_drawings"].get("features", [])):
+            geom = feat.get("geometry", {})
+            if geom.get("type") == "LineString" and len(geom.get("coordinates", [])) >= 2:
+                return LineString(geom["coordinates"])
+    return None
 
+# Persist the last valid section in session_state
+if "section_line_coords" not in st.session_state:
+    st.session_state["section_line_coords"] = None
+
+maybe_line = extract_linestring_from_map_out(map_out or {})
+if maybe_line is not None:
+    st.session_state["section_line_coords"] = list(map(list, maybe_line.coords))
+
+# Controls
 st.subheader("Generate Soil Profile")
+go = st.button("Generate Soil Profile", type="primary")
 
-if last_line is None:
-    st.info("Draw a polyline to generate the profile.")
+if not st.session_state["section_line_coords"]:
+    st.info("Draw a polyline on the map, then click **Generate Soil Profile**.")
+    st.stop()
+
+# Rebuild LineString from session_state when button is pressed
+last_line = LineString(st.session_state["section_line_coords"])
+
+if not go:
+    st.info("Click **Generate Soil Profile** to compute the corridor, table, and plot.")
     st.stop()
 
 # Compute corridor selection
@@ -454,7 +477,7 @@ csv_bytes = csv_buf.getvalue().encode("utf-8")
 gj = {
     "type": "Feature",
     "properties": {"name": "section_line"},
-    "geometry": {"type": "LineString", "coordinates": list(map(list, last_line.coords))}
+    "geometry": {"type": "LineString", "coordinates": st.session_state['section_line_coords']}
 }
 gj_bytes = json.dumps(gj, indent=2).encode("utf-8")
 
@@ -462,4 +485,4 @@ st.download_button("Download CSV (section_boreholes.csv)", data=csv_bytes, file_
 st.download_button("Download section line (section_line.geojson)", data=gj_bytes, file_name="section_line.geojson", mime="application/geo+json", use_container_width=True)
 st.download_button("Download plot (soil_profile.png)", data=png_bytes, file_name="soil_profile.png", mime="image/png", use_container_width=True)
 
-st.caption("✅ Labels are clean text (no bubble) with white halo; dots are larger for visibility. Draw your section, set corridor/Y-limits/title/figure size, then generate and download.")
+st.caption("✅ Draw your section, click **Generate Soil Profile**, then download the CSV/GeoJSON/PNG.")
