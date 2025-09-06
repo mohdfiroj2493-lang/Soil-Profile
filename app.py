@@ -1,4 +1,4 @@
-# Streamlit Borehole Section Profile — Auto-generate, interactive, no table
+# app.py — Auto-generate interactive profile, only "Corridor width (ft)" slider on page
 import io
 import json
 from typing import Dict, List, Tuple
@@ -23,6 +23,13 @@ CIRCLE_STROKE_W     = 1
 CIRCLE_FILL_OPACITY = 0.95
 LABEL_DX_PX, LABEL_DY_PX = 8, -10
 
+# Default plot settings (kept internal; no UI needed)
+Y_MIN_DEFAULT = 900.0
+Y_MAX_DEFAULT = 1060.0
+TITLE_DEFAULT = "Soil Profile"
+FIG_HEIGHT_IN = 20.0  # roughly * 50 → px
+
+# Fixed soil colors + legend order
 SOIL_COLOR_MAP = {
     "Topsoil": "#ffffcb","SM": "#76d7c4","SC-SM": "#fff59d","CL": "#c5cae9","PWR": "#808080",
     "RF": "#929591","ML": "#ef5350","CL-ML": "#ef9a9a","CH": "#64b5f6","MH": "#ffb74d","GM": "#aed581",
@@ -34,11 +41,11 @@ ORDERED_SOIL_TYPES = [
     "SM-SC","SP","SW","GW","SM-ML","CL-CH","SC-CL"
 ]
 
+# Column mapping + SPT label
 RENAME_MAP = {
     'Bore Log':'Borehole','Elevation From':'Elevation_From','Elevation To':'Elevation_To',
     'Soil Layer Description':'Soil_Type','Latitude':'Latitude','Longitude':'Longitude','SPT N-Value':'SPT',
 }
-
 def compute_spt_avg(value):
     if value is None:
         return "N = N/A"
@@ -48,10 +55,8 @@ def compute_spt_avg(value):
     nums = []
     for x in s.split(","):
         x = x.strip().replace('"','')
-        try:
-            nums.append(float(x))
-        except ValueError:
-            pass
+        try: nums.append(float(x))
+        except ValueError: pass
     return f"N = {round(sum(nums)/len(nums), 2)}" if nums else "N = N/A"
 
 @st.cache_data(show_spinner=False)
@@ -197,23 +202,15 @@ def add_labeled_point(fmap: folium.Map, lat: float, lon: float, name: str, color
 
 # ── UI ───────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Borehole Section Profile", layout="wide")
-st.title("Soil Profile – Section View (auto-generate)")
+st.title("Section / Profile (ft) — Soil")
 
-st.sidebar.header("1) Upload data")
+# Sidebar = uploads only (no other settings)
+st.sidebar.header("Upload")
 main_file = st.sidebar.file_uploader("MAIN borehole Excel (Elevations/Soils/SPT)", type=["xlsx","xls"])
-prop_file = st.sidebar.file_uploader("Optional: PROPOSED.xlsx (lat/lon/name)", type=["xlsx","xls"])
+prop_file = st.sidebar.file_uploader("Optional PROPOSED.xlsx (lat/lon/name)", type=["xlsx","xls"])
 
-st.sidebar.header("2) Map & Profile settings")
-basemap_name = st.sidebar.selectbox(
-    "Basemap",
-    ["Esri Satellite","OpenStreetMap","Esri Streets","Esri WorldTopo","OpenTopoMap","Carto Light","Carto Dark","NASA Night"],
-    index=0,
-)
-corridor_ft = st.sidebar.number_input("Corridor (ft)", min_value=10.0, value=200.0, step=10.0)
-ymin = st.sidebar.number_input("Y min (ft)", value=900.0)
-ymax = st.sidebar.number_input("Y max (ft)", value=1060.0)
-title = st.sidebar.text_input("Plot Title", value="Soil Profile")
-figh_in = st.sidebar.number_input("Figure height (in)", value=20.0, step=1.0)
+# Corridor slider on the PAGE (like your screenshot)
+corridor_ft = st.slider("Corridor width (ft)", min_value=50, max_value=1000, value=200, step=10)
 
 if main_file is None:
     st.info("Upload the MAIN Excel to begin. Draw a polyline to see the profile update automatically.")
@@ -226,33 +223,21 @@ proposed_df = pd.DataFrame(columns=["Latitude","Longitude","Name"])
 if prop_file is not None:
     proposed_df = load_proposed_df(prop_file.getvalue())
 
-# Build map
-center_lat = float(pd.concat([bh_coords[["Latitude"]], proposed_df[["Latitude"]] if not proposed_df.empty else bh_coords[["Latitude"]]], ignore_index=True)['Latitude'].mean())
-center_lon = float(pd.concat([bh_coords[["Longitude"]], proposed_df[["Longitude"]] if not proposed_df.empty else bh_coords[["Longitude"]]], ignore_index=True)['Longitude'].mean())
+# Build map (Esri Satellite default)
+center_lat = float(pd.concat(
+    [bh_coords[['Latitude']], proposed_df[['Latitude']] if not proposed_df.empty else bh_coords[['Latitude']]],
+    ignore_index=True)['Latitude'].mean()
+)
+center_lon = float(pd.concat(
+    [bh_coords[['Longitude']], proposed_df[['Longitude']] if not proposed_df.empty else bh_coords[['Longitude']]],
+    ignore_index=True)['Longitude'].mean()
+)
 fmap = Map(location=(center_lat, center_lon), zoom_start=13, control_scale=True)
-
-# basemaps
-tiles = {
-    "OpenStreetMap": "OpenStreetMap",
-    "Esri Satellite": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    "Esri Streets": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
-    "Esri WorldTopo": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
-    "OpenTopoMap": "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-    "Carto Light": "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-    "Carto Dark": "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-    "NASA Night": "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_CityLights_2012/default/{time}/{tilematrixset}{maxZoom}/{z}/{y}/{x}.jpg",
-}
-attr = {
-    "OpenStreetMap": "© OpenStreetMap", "Esri Satellite": "Tiles © Esri", "Esri Streets": "Tiles © Esri",
-    "Esri WorldTopo": "Tiles © Esri", "OpenTopoMap": "© OpenTopoMap", "Carto Light": "© CartoDB",
-    "Carto Dark": "© CartoDB", "NASA Night": "NASA GIBS",
-}
-for name, url in tiles.items():
-    if name == "NASA Night":
-        folium.raster_layers.TileLayer(tiles=url, name=name, attr=attr[name], overlay=False, control=True,
-                                       **{"time":"2012-01-01","tilematrixset":"GoogleMapsCompatible","maxZoom":8}).add_to(fmap)
-    else:
-        folium.raster_layers.TileLayer(tiles=url, name=name, attr=attr[name], overlay=False, control=True).add_to(fmap)
+# basemap layers
+folium.raster_layers.TileLayer(
+    tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    name="Esri Satellite", attr="Tiles © Esri", overlay=False, control=True
+).add_to(fmap)
 LayerControl(position='topright').add_to(fmap)
 
 # points
@@ -276,7 +261,7 @@ map_out = st_folium(
     returned_objects=["last_active_drawing","all_drawings"], key="map"
 )
 
-# determine last drawn line (auto-generate trigger)
+# get last drawn LineString (auto-trigger)
 def extract_linestring(mo) -> LineString | None:
     lad = mo.get("last_active_drawing")
     if isinstance(lad, dict):
@@ -319,7 +304,11 @@ sel_ordered = [r["Borehole"] for r in sorted(rows, key=lambda x: (x["Chainage_ft
 xpos = {r["Borehole"]: r["Chainage_ft"] for r in rows}
 
 # build interactive profile (directly on page)
-fig_height_px = int(figh_in * 50)
+fig_height_px = int(FIG_HEIGHT_IN * 50)
 plot_df = df[df['Borehole'].isin(sel_ordered)]
-fig = build_plotly_profile(plot_df, sel_ordered, xpos, float(ymin), float(ymax), title, fig_height_px=fig_height_px)
+fig = build_plotly_profile(
+    plot_df, sel_ordered, xpos,
+    y_min=Y_MIN_DEFAULT, y_max=Y_MAX_DEFAULT, title=TITLE_DEFAULT,
+    fig_height_px=fig_height_px
+)
 st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
