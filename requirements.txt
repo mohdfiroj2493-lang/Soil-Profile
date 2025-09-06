@@ -1,7 +1,8 @@
+# All have Py3.13 wheels on Streamlit Cloud (no compiling)
 streamlit==1.37.1
-pandas==2.2.2
-numpy==2.1.3
-openpyxl==3.1.5
+pandas>=2.2.3
+numpy>=2.1.2
+openpyxl>=3.1.5
 folium==0.17.0
 streamlit-folium==0.20.0
 plotly==5.24.1
