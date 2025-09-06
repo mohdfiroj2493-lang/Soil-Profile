@@ -1,10 +1,11 @@
 streamlit==1.37.0
 pandas
 numpy
-matplotlib
 geopy
 shapely
 openpyxl
 folium
 streamlit-folium
+plotly
+kaleido
 xyzservices
