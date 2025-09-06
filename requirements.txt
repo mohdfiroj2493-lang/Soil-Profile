@@ -7,5 +7,4 @@ openpyxl
 folium
 streamlit-folium
 plotly
-kaleido
 xyzservices
