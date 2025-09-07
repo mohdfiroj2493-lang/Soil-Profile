@@ -1,4 +1,4 @@
-# app.py — Auto 2D + 3D (plan) profiles with vertical exaggeration
+# app.py — Auto 2D + 3D (plan) profiles with vertical exaggeration, full legend
 
 from typing import Dict, List, Tuple
 import io
@@ -23,24 +23,31 @@ CIRCLE_STROKE_W     = 1
 CIRCLE_FILL_OPACITY = 0.95
 LABEL_DX_PX, LABEL_DY_PX = 8, -10
 
-# Default profile settings (internal)
-Y_MIN_DEFAULT = 900.0
-Y_MAX_DEFAULT = 1060.0
 TITLE_DEFAULT = "Soil Profile"
-FIG_HEIGHT_IN = 20.0  # ~in→px: *50
+FIG_HEIGHT_IN = 20.0  # inches → pixels with *50 later
 
-# Soil colors + legend order
+# Soil colors (extend as needed)
 SOIL_COLOR_MAP = {
     "Topsoil": "#ffffcb", "Water": "#00ffff",
+    # Clays/Silts
     "CL": "#c5cae9","CH": "#64b5f6","CL-CH": "#fff176","CL-ML": "#ef9a9a",
     "ML": "#ef5350","MH": "#ffb74d",
+    # Gravels/Sands
     "GM": "#aed581","GW": "#c8e6c9","GC": "#00ff00","GP": "#aaff32","GP-GC": "#008000","GP-GM": "#15b01a",
-    "SM": "#76d7c4","SP": "#ce93d8","SC": "#81c784","SW": "#ba68c8","SM-SC": "#e1bee7","SM-ML": "#dcedc8","SC-CL": "#ffee58","SC-SM": "#fff59d",
+    "SM": "#76d7c4","SP": "#ce93d8","SC": "#81c784","SW": "#ba68c8",
+    "SM-SC": "#e1bee7","SM-ML": "#dcedc8","SC-CL": "#ffee58","SC-SM": "#fff59d",
+    # Rock / Fill / Weathered
     "PWR": "#808080","RF": "#929591","Rock": "#c0c0c0",
 }
+# Preferred legend order; anything else will be appended automatically
 ORDERED_SOIL_TYPES = [
-    "Topsoil","SM","SC-SM","CL","PWR","RF","ML","CL-ML","CH","MH","GM","SC","Rock",
-    "SM-SC","SP","SW","GW","SM-ML","CL-CH","SC-CL"
+    "Topsoil", "Water",
+    "SM", "SM-ML", "SM-SC", "SP", "SW",
+    "SC", "SC-CL", "SC-SM",
+    "CL", "CL-ML", "CL-CH", "CH",
+    "ML", "MH",
+    "GM", "GP-GM", "GP-GC", "GP", "GC", "GW",
+    "Rock", "PWR", "RF",
 ]
 
 # Column mapping + SPT label
@@ -138,12 +145,20 @@ def chainage_and_offset_ft(line: LineString, lat: float, lon: float) -> Tuple[fl
 
 # Lat/Lon → local plan coordinates (ft), origin at (lat0,lon0)
 def latlon_to_local_xy_ft(lat: float, lon: float, lat0: float, lon0: float) -> Tuple[float, float]:
-    # Easting (x): distance along latitude circle; Northing (y): meridian distance
-    x_m = geodesic((lat0, lon0), (lat0, lon)).meters
-    y_m = geodesic((lat0, lon0), (lat,  lon0)).meters
+    x_m = geodesic((lat0, lon0), (lat0, lon)).meters   # Easting
+    y_m = geodesic((lat0, lon0), (lat,  lon0)).meters   # Northing
     x = x_m * 3.28084 * (1 if lon >= lon0 else -1)
     y = y_m * 3.28084 * (1 if lat >= lat0 else -1)
     return x, y
+
+def auto_y_limits(df_subset: pd.DataFrame, pad_ratio: float = 0.05) -> Tuple[float, float]:
+    if df_subset.empty:
+        return 0.0, 1.0
+    y_min = float(df_subset['Elevation_To'].min())
+    y_max = float(df_subset['Elevation_From'].max())
+    rng = max(1.0, (y_max - y_min))
+    pad = rng * pad_ratio
+    return y_min - pad, y_max + pad
 
 # ── 2D profile builder ───────────────────────────────────────────────────────
 def build_plotly_profile(
@@ -179,12 +194,15 @@ def build_plotly_profile(
                 font=dict(size=10, family="Arial", color="#111")
             ))
 
+    # Legend: preferred order first, then any extra in alpha order
+    ordered_present = [s for s in ORDERED_SOIL_TYPES if s in used_types]
+    extra_present   = sorted([s for s in used_types if s not in set(ORDERED_SOIL_TYPES)])
+    legend_types    = ordered_present + extra_present
+
     fig = go.Figure()
-    legend_types = [s for s in ORDERED_SOIL_TYPES if s in used_types]
-    legend_types += [s for s in sorted(unknown_types) if s not in legend_types]
     for soil in legend_types:
         fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers",
-                                 marker=dict(size=12, color=SOIL_COLOR_MAP.get(soil, "#ccc")),
+                                 marker=dict(size=12, color=SOIL_COLOR_MAP.get(soil, "#cccccc")),
                                  name=soil, showlegend=True))
 
     xmin = (min(x_positions.values())-half) if x_positions else -half
@@ -211,21 +229,18 @@ def build_3d_profile_plan(
     vert_exag: float = 1.0,
 ) -> go.Figure:
     """
-    Interactive 3D profile in PLAN coordinates (local feet).
+    3D in PLAN coordinates (local feet).
     x = Easting (ft), y = Northing (ft), z = Elevation (ft) with vertical exaggeration.
-    Each soil layer is a thin cuboid colored by SOIL_COLOR_MAP.
     """
     half = column_width_ft / 2.0
-
-    # Global datum for "display-only" vertical exaggeration
     z0 = float(df['Elevation_To'].min() if not df.empty else 0.0)
-    def z_scale(z):  # z' = z0 + (z - z0) * VE
+    def z_scale(z):  # display-only VE
         return z0 + (z - z0) * vert_exag
 
     meshes: list[go.Mesh3d] = []
     used_types, unknown_types = set(), set()
 
-    # Label anchors
+    # Labels
     label_x, label_y, label_z, label_text = [], [], [], []
 
     for bh in selected_bhs:
@@ -237,21 +252,17 @@ def build_3d_profile_plan(
         y0, y1 = y_center - half, y_center + half
 
         top_el = float(bore['Elevation_From'].max())
-        label_x.append(x_center)
-        label_y.append(y_center)
-        label_z.append(z_scale(top_el) + 3)  # text above
-        label_text.append(str(bh))
+        label_x.append(x_center); label_y.append(y_center)
+        label_z.append(z_scale(top_el) + 3); label_text.append(str(bh))
 
         for _, r in bore.iterrows():
             z_bot = z_scale(float(r['Elevation_To']))
             z_top = z_scale(float(r['Elevation_From']))
             soil = str(r['Soil_Type'])
             color = SOIL_COLOR_MAP.get(soil, '#cccccc')
-            if soil not in SOIL_COLOR_MAP:
-                unknown_types.add(soil)
+            if soil not in SOIL_COLOR_MAP: unknown_types.add(soil)
             used_types.add(soil)
 
-            # cuboid vertices
             xs = [x0, x1, x1, x0, x0, x1, x1, x0]
             ys = [y0, y0, y1, y1, y0, y0, y1, y1]
             zs = [z_bot, z_bot, z_bot, z_bot, z_top, z_top, z_top, z_top]
@@ -270,18 +281,21 @@ def build_3d_profile_plan(
 
     fig = go.Figure(data=meshes)
 
-    # Legend (dummy traces)
-    legend_types = [s for s in ORDERED_SOIL_TYPES if s in used_types]
-    legend_types += [s for s in sorted(unknown_types) if s not in legend_types]
+    # Legend: preferred order first, then extras
+    ordered_present = [s for s in ORDERED_SOIL_TYPES if s in used_types]
+    extra_present   = sorted([s for s in used_types if s not in set(ORDERED_SOIL_TYPES)])
+    legend_types    = ordered_present + extra_present
+
     for soil in legend_types:
-        fig.add_trace(go.Scatter3d(x=[None], y=[None], z=[None], mode='markers',
-                                   marker=dict(size=8, color=SOIL_COLOR_MAP.get(soil, '#ccc')),
-                                   name=soil, showlegend=True))
+        fig.add_trace(go.Scatter3d(
+            x=[None], y=[None], z=[None], mode='markers',
+            marker=dict(size=8, color=SOIL_COLOR_MAP.get(soil, '#cccccc')),
+            name=soil, showlegend=True
+        ))
 
     if label_text:
         fig.add_trace(go.Scatter3d(
-            x=label_x, y=label_y, z=label_z,
-            mode='text', text=label_text,
+            x=label_x, y=label_y, z=label_z, mode='text', text=label_text,
             textposition='top center', showlegend=False
         ))
 
@@ -291,8 +305,8 @@ def build_3d_profile_plan(
         scene=dict(
             xaxis=dict(title='Easting (ft, local)', backgroundcolor='white', gridcolor='#eee'),
             yaxis=dict(title='Northing (ft, local)', backgroundcolor='white', gridcolor='#eee'),
-            zaxis=dict(title=f'Elevation (ft, VE×{vert_exag:.2f})', range=[zmin_s, zmax_s],
-                       backgroundcolor='white', gridcolor='#eee'),
+            zaxis=dict(title=f'Elevation (ft, VE×{vert_exag:.2f})',
+                       range=[zmin_s, zmax_s], backgroundcolor='white', gridcolor='#eee'),
             aspectmode='data',
             camera=dict(eye=dict(x=1.4, y=1.2, z=0.8))
         ),
@@ -319,7 +333,7 @@ def add_labeled_point(fmap: folium.Map, lat: float, lon: float, name: str, color
 # ── UI ───────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Borehole Section Profile", layout="wide")
 
-# Sidebar = uploads only
+# Sidebar uploads
 st.sidebar.header("Upload")
 main_file = st.sidebar.file_uploader("MAIN borehole Excel (Elevations/Soils/SPT)", type=["xlsx","xls"])
 prop_file = st.sidebar.file_uploader("Optional PROPOSED.xlsx (lat/lon/name)", type=["xlsx","xls"])
@@ -339,7 +353,6 @@ if prop_file is not None:
 # ── 1) Map with Bore Logs ───────────────────────────────────────────────────
 st.title("Map with Bore Logs")
 
-# Center map
 center_lat = float(pd.concat(
     [bh_coords[['Latitude']], proposed_df[['Latitude']] if not proposed_df.empty else bh_coords[['Latitude']]],
     ignore_index=True)['Latitude'].mean()
@@ -350,23 +363,19 @@ center_lon = float(pd.concat(
 )
 
 fmap = Map(location=(center_lat, center_lon), zoom_start=13, control_scale=True)
-
-# Esri Satellite basemap
 folium.raster_layers.TileLayer(
     tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     name="Esri Satellite", attr="Tiles © Esri", overlay=False, control=True
 ).add_to(fmap)
 LayerControl(position='topright').add_to(fmap)
 
-# Borehole points (blue) + Proposed (red)
 for _, r in bh_coords.iterrows():
     add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), str(r['Borehole']), EXISTING_TEXT_COLOR)
 if not proposed_df.empty:
     for _, r in proposed_df.iterrows():
-        name = str(r.get("Name","")).strip() or "Proposed"
-        add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), name, PROPOSED_TEXT_COLOR)
+        nm = str(r.get("Name","")).strip() or "Proposed"
+        add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm, PROPOSED_TEXT_COLOR)
 
-# Draw tool
 Draw(
     draw_options={"polyline":{"shapeOptions":{"color":"#3388ff","weight":4}},
                   "polygon":False,"circle":False,"rectangle":False,"marker":False,"circlemarker":False},
@@ -378,7 +387,6 @@ map_out = st_folium(
     returned_objects=["last_active_drawing","all_drawings"], key="map"
 )
 
-# Extract latest LineString and persist
 def extract_linestring(mo) -> LineString | None:
     lad = mo.get("last_active_drawing")
     if isinstance(lad, dict):
@@ -401,16 +409,15 @@ if maybe_line is not None:
 
 # ── 2) Section / Profile heading + Corridor slider ──────────────────────────
 st.title("Section / Profile (ft) — Soil")
-corridor_ft = st.slider("Corridor width (ft)", min_value=0, max_value=1000, value=100, step=10)
+corridor_ft = st.slider("Corridor width (ft)", min_value=0, max_value=1000, value=200, step=10)
 
-# Auto-generate only when a line exists
 if not st.session_state["section_line_coords"]:
     st.info("Draw a polyline on the map (double-click to finish). The profiles will appear below automatically.")
     st.stop()
 
 section_line = LineString(st.session_state["section_line_coords"])
 
-# Select boreholes within corridor (for 2D) and keep a list for 3D (toggle later)
+# Select boreholes within corridor
 rows = []
 for _, r in bh_coords.iterrows():
     ch, off = chainage_and_offset_ft(section_line, float(r['Latitude']), float(r['Longitude']))
@@ -425,11 +432,13 @@ ordered_bhs = [r["Borehole"] for r in sorted(rows, key=lambda x: (x["Chainage_ft
 xpos = {r["Borehole"]: r["Chainage_ft"] for r in rows}
 
 # ── 3) Interactive 2D profile (chainage) ────────────────────────────────────
-fig_height_px = int(FIG_HEIGHT_IN * 50)
 plot_df = df[df['Borehole'].isin(ordered_bhs)]
+ymin_auto, ymax_auto = auto_y_limits(plot_df)
+fig_height_px = int(FIG_HEIGHT_IN * 50)
+
 fig2d = build_plotly_profile(
     df=plot_df, ordered_bhs=ordered_bhs, x_positions=xpos,
-    y_min=Y_MIN_DEFAULT, y_max=Y_MAX_DEFAULT, title=TITLE_DEFAULT,
+    y_min=ymin_auto, y_max=ymax_auto, title=TITLE_DEFAULT,
     fig_height_px=fig_height_px
 )
 st.plotly_chart(fig2d, use_container_width=True, config={"displaylogo": False})
@@ -442,31 +451,20 @@ with left:
 with right:
     vert_exag = st.slider("Vertical exaggeration (display only)", 0.5, 10.0, 2.0, 0.1)
 
-# choose which BHs for 3D
-if limit_to_corridor:
-    bhs_for_3d = ordered_bhs
-else:
-    # all boreholes that have layers in df
-    bhs_for_3d = [bh for bh in bh_coords['Borehole'].tolist() if (df['Borehole'] == bh).any()]
+bhs_for_3d = ordered_bhs if limit_to_corridor else \
+             [bh for bh in bh_coords['Borehole'].tolist() if (df['Borehole'] == bh).any()]
 
-# local origin at mean lat/lon of selected BHs
 sel_coords = bh_coords[bh_coords['Borehole'].isin(bhs_for_3d)]
-lat0 = float(sel_coords['Latitude'].mean())
-lon0 = float(sel_coords['Longitude'].mean())
-xy_map = {
-    row['Borehole']: latlon_to_local_xy_ft(float(row['Latitude']), float(row['Longitude']), lat0, lon0)
-    for _, row in sel_coords.iterrows()
-}
+lat0 = float(sel_coords['Latitude'].mean()); lon0 = float(sel_coords['Longitude'].mean())
+xy_map = {row['Borehole']: latlon_to_local_xy_ft(float(row['Latitude']), float(row['Longitude']), lat0, lon0)
+          for _, row in sel_coords.iterrows()}
 
 plot_df3d = df[df['Borehole'].isin(bhs_for_3d)]
+ymin_auto3d, ymax_auto3d = auto_y_limits(plot_df3d)
+
 fig3d = build_3d_profile_plan(
-    df=plot_df3d,
-    selected_bhs=bhs_for_3d,
-    xy_ft=xy_map,
-    y_min=Y_MIN_DEFAULT,
-    y_max=Y_MAX_DEFAULT,
-    title=TITLE_DEFAULT,
-    column_width_ft=60.0,
-    vert_exag=vert_exag,
+    df=plot_df3d, selected_bhs=bhs_for_3d, xy_ft=xy_map,
+    y_min=ymin_auto3d, y_max=ymax_auto3d, title=TITLE_DEFAULT,
+    column_width_ft=60.0, vert_exag=vert_exag
 )
 st.plotly_chart(fig3d, use_container_width=True, config={"displaylogo": False})
