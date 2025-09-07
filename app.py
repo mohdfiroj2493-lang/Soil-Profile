@@ -31,10 +31,12 @@ FIG_HEIGHT_IN = 20.0  # ~in→px: *50
 
 # Soil colors + legend order
 SOIL_COLOR_MAP = {
-    "Topsoil": "#ffffcb","SM": "#76d7c4","SC-SM": "#fff59d","CL": "#c5cae9","PWR": "#808080",
-    "RF": "#929591","ML": "#ef5350","CL-ML": "#ef9a9a","CH": "#64b5f6","MH": "#ffb74d","GM": "#aed581",
-    "SC": "#81c784","Rock": "#f8bbd0","SM-SC": "#e1bee7","SP": "#ce93d8","SW": "#ba68c8","GW": "#c8e6c9",
-    "SM-ML": "#dcedc8","CL-CH": "#fff176","SC-CL": "#ffee58",
+    "Topsoil": "#ffffcb", "Water": "#00ffff",
+    "CL": "#c5cae9","CH": "#64b5f6","CL-CH": "#fff176","CL-ML": "#ef9a9a",
+    "ML": "#ef5350","MH": "#ffb74d",
+    "GM": "#aed581","GW": "#c8e6c9","GC": "#00ff00","GP": "#aaff32","GP-GC": "#008000","GP-GM": "#15b01a",
+    "SM": "#76d7c4","SP": "#ce93d8","SC": "#81c784","SW": "#ba68c8","SM-SC": "#e1bee7","SM-ML": "#dcedc8","SC-CL": "#ffee58","SC-SM": "#fff59d",
+    "PWR": "#808080","RF": "#929591","Rock": "#c0c0c0",
 }
 ORDERED_SOIL_TYPES = [
     "Topsoil","SM","SC-SM","CL","PWR","RF","ML","CL-ML","CH","MH","GM","SC","Rock",
@@ -399,7 +401,7 @@ if maybe_line is not None:
 
 # ── 2) Section / Profile heading + Corridor slider ──────────────────────────
 st.title("Section / Profile (ft) — Soil")
-corridor_ft = st.slider("Corridor width (ft)", min_value=50, max_value=1000, value=200, step=10)
+corridor_ft = st.slider("Corridor width (ft)", min_value=0, max_value=1000, value=100, step=10)
 
 # Auto-generate only when a line exists
 if not st.session_state["section_line_coords"]:
