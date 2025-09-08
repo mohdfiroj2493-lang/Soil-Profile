@@ -1,5 +1,5 @@
-# app.py — Auto 2D + 3D (plan) profiles with vertical exaggeration
-# Responsive 2D columns (auto width + adaptive label sizes)
+# app.py — Map → Section slider → 2D + 3D (plan) profiles
+# Adds manual "Column width (ft)" slider for the 2D profile
 
 from typing import Dict, List, Tuple, Optional
 import io
@@ -161,12 +161,11 @@ def auto_y_limits(df_subset: pd.DataFrame, pad_ratio: float = 0.05) -> Tuple[flo
     pad = rng * pad_ratio
     return y_min - pad, y_max + pad
 
-# NEW: compute responsive column width from chainage spacing
+# Auto width suggestion from spacing
 def dynamic_column_width(x_positions: Dict[str, float],
                          default_width: float = 60.0,
                          min_width: float = 8.0,
                          fraction_of_min_gap: float = 0.8) -> float:
-    """Choose a width that avoids overlap when BHs are close."""
     xs = sorted(x_positions.values())
     if len(xs) < 2:
         return default_width
@@ -174,7 +173,6 @@ def dynamic_column_width(x_positions: Dict[str, float],
     if not gaps:
         return default_width
     min_gap = min(gaps)
-    # Width is at most default, but no more than a fraction of smallest gap
     width = min(default_width, fraction_of_min_gap * min_gap)
     return max(min_width, width)
 
@@ -182,10 +180,10 @@ def dynamic_column_width(x_positions: Dict[str, float],
 def build_plotly_profile(
     df: pd.DataFrame, ordered_bhs: List[str], x_positions: Dict[str,float],
     y_min: float, y_max: float, title: str,
-    column_width: Optional[float] = None,
+    column_width: Optional[float],
     fig_height_px: int = 900
 ) -> go.Figure:
-    # Pick a smart width if not supplied
+    # Width is either manual (passed) or auto from spacing
     width = column_width if column_width is not None else dynamic_column_width(x_positions)
     half = width / 2.0
 
@@ -235,7 +233,7 @@ def build_plotly_profile(
                 font=dict(size=inner_font, family="Arial", color="#111")
             ))
 
-    # Legend: preferred order first, then any extra in alpha order
+    # Legend: preferred order first, then any extra
     ordered_present = [s for s in ORDERED_SOIL_TYPES if s in used_types]
     extra_present   = sorted([s for s in used_types if s not in set(ORDERED_SOIL_TYPES)])
     legend_types    = ordered_present + extra_present
@@ -270,19 +268,14 @@ def build_3d_profile_plan(
     column_width_ft: float = 60.0,
     vert_exag: float = 1.0,
 ) -> go.Figure:
-    """
-    3D in PLAN coordinates (local feet).
-    x = Easting (ft), y = Northing (ft), z = Elevation (ft) with vertical exaggeration.
-    """
     half = column_width_ft / 2.0
     z0 = float(df['Elevation_To'].min() if not df.empty else 0.0)
     def z_scale(z):  # display-only VE
         return z0 + (z - z0) * vert_exag
 
     meshes: list[go.Mesh3d] = []
-    used_types, unknown_types = set(), set()
+    used_types = set()
 
-    # Labels
     label_x, label_y, label_z, label_text = [], [], [], []
 
     for bh in selected_bhs:
@@ -302,7 +295,6 @@ def build_3d_profile_plan(
             z_top = z_scale(float(r['Elevation_From']))
             soil = str(r['Soil_Type'])
             color = SOIL_COLOR_MAP.get(soil, '#cccccc')
-            if soil not in SOIL_COLOR_MAP: unknown_types.add(soil)
             used_types.add(soil)
 
             xs = [x0, x1, x1, x0, x0, x1, x1, x0]
@@ -313,17 +305,14 @@ def build_3d_profile_plan(
             k = [2, 3, 6, 7, 5, 4, 6, 5, 7, 6, 4, 7]
 
             meshes.append(go.Mesh3d(
-                x=xs, y=ys, z=zs,
-                i=i, j=j, k=k,
-                color=color, opacity=0.96,
-                flatshading=True,
+                x=xs, y=ys, z=zs, i=i, j=j, k=k,
+                color=color, opacity=0.96, flatshading=True,
                 lighting=dict(ambient=0.6, diffuse=0.6),
                 hoverinfo='skip', showlegend=False
             ))
 
     fig = go.Figure(data=meshes)
 
-    # Legend: preferred order first, then extras
     ordered_present = [s for s in ORDERED_SOIL_TYPES if s in used_types]
     extra_present   = sorted([s for s in used_types if s not in set(ORDERED_SOIL_TYPES)])
     legend_types    = ordered_present + extra_present
@@ -473,15 +462,27 @@ if not rows:
 ordered_bhs = [r["Borehole"] for r in sorted(rows, key=lambda x: (x["Chainage_ft"], x["Borehole"]))]
 xpos = {r["Borehole"]: r["Chainage_ft"] for r in rows}
 
-# ── 3) Interactive 2D profile (chainage) — now responsive ───────────────────
+# ── 3) Interactive 2D profile (chainage) — with manual width option ─────────
 plot_df = df[df['Borehole'].isin(ordered_bhs)]
 ymin_auto, ymax_auto = auto_y_limits(plot_df)
 fig_height_px = int(FIG_HEIGHT_IN * 50)
 
+# New controls: auto width vs manual slider
+suggested = dynamic_column_width(xpos)  # based on 80% of min gap
+auto_width = st.checkbox("Auto column width", value=True)
+if auto_width:
+    column_width_ft = None
+    st.caption(f"Auto width ≈ **{suggested:.1f} ft** (80% of nearest spacing)")
+else:
+    minw, maxw = 8.0, 300.0
+    default_val = float(min(max(suggested, 30.0), maxw))
+    column_width_ft = st.slider("Column width (ft)", min_value=minw, max_value=maxw,
+                                value=default_val, step=2.0)
+
 fig2d = build_plotly_profile(
     df=plot_df, ordered_bhs=ordered_bhs, x_positions=xpos,
     y_min=ymin_auto, y_max=ymax_auto, title=TITLE_DEFAULT,
-    column_width=None,  # AUTO
+    column_width=column_width_ft,  # None → auto; float → manual
     fig_height_px=fig_height_px
 )
 st.plotly_chart(fig2d, use_container_width=True, config={"displaylogo": False})
