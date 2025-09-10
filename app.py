@@ -176,177 +176,6 @@ def dynamic_column_width(x_positions: Dict[str, float],
     width = min(default_width, fraction_of_min_gap * min_gap)
     return max(min_width, width)
 
-# ── 2D profile builder ───────────────────────────────────────────────────────
-def build_plotly_profile(
-    df: pd.DataFrame, ordered_bhs: List[str], x_positions: Dict[str,float],
-    y_min: float, y_max: float, title: str,
-    column_width: Optional[float],
-    fig_height_px: int = 900
-) -> go.Figure:
-    # Width is either manual (passed) or auto from spacing
-    width = column_width if column_width is not None else dynamic_column_width(x_positions)
-    half = width / 2.0
-
-    # Adaptive label sizes depending on width
-    def inner_font_for(w):
-        if w >= 50: return 11
-        if w >= 35: return 10
-        if w >= 22: return 9
-        if w >= 14: return 8
-        return 7
-    def bh_font_for(w):
-        if w >= 50: return 13
-        if w >= 35: return 12
-        if w >= 22: return 11
-        if w >= 14: return 10
-        return 9
-
-    inner_font = inner_font_for(width)
-    bh_font    = bh_font_for(width)
-
-    shapes, annotations = [], []
-    used_types, unknown_types = set(), set()
-
-    for bh in ordered_bhs:
-        bore = df[df['Borehole'] == bh]
-        if bore.empty:
-            continue
-        x = x_positions[bh]
-        top_el = bore['Elevation_From'].max()
-        annotations.append(dict(
-            x=x, y=top_el+3, text=bh, showarrow=False,
-            xanchor="center", yanchor="bottom",
-            font=dict(size=bh_font, family="Arial Black", color="#111")
-        ))
-        for _, r in bore.iterrows():
-            ef, et = float(r['Elevation_From']), float(r['Elevation_To'])
-            soil = str(r['Soil_Type'])
-            spt  = str(r['SPT_Label'])
-            color = SOIL_COLOR_MAP.get(soil, "#cccccc")
-            if soil not in SOIL_COLOR_MAP: unknown_types.add(soil)
-            used_types.add(soil)
-            shapes.append(dict(type="rect", x0=x-half, x1=x+half, y0=et, y1=ef,
-                               line=dict(color="#000", width=1), fillcolor=color))
-            annotations.append(dict(
-                x=x, y=(ef+et)/2, text=f"{soil} ({spt})", showarrow=False,
-                xanchor="center", yanchor="middle",
-                font=dict(size=inner_font, family="Arial", color="#111")
-            ))
-
-    # Legend: preferred order first, then any extra
-    ordered_present = [s for s in ORDERED_SOIL_TYPES if s in used_types]
-    extra_present   = sorted([s for s in used_types if s not in set(ORDERED_SOIL_TYPES)])
-    legend_types    = ordered_present + extra_present
-
-    fig = go.Figure()
-    for soil in legend_types:
-        fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers",
-                                 marker=dict(size=12, color=SOIL_COLOR_MAP.get(soil, "#cccccc")),
-                                 name=soil, showlegend=True))
-
-    xs = list(x_positions.values())
-    xmin = (min(xs)-half) if xs else -half
-    xmax = (max(xs)+3*half) if xs else half
-    fig.update_layout(
-        title=title, xaxis_title="Chainage along section (ft)", yaxis_title="Elevation (ft)",
-        shapes=shapes, annotations=annotations, height=fig_height_px,
-        margin=dict(l=60, r=260, t=60, b=60), plot_bgcolor="white",
-        legend=dict(yanchor="top", y=1, xanchor="left", x=1.02, bordercolor="#ddd", borderwidth=1)
-    )
-    fig.update_xaxes(range=[xmin, xmax], showgrid=True, gridcolor="#eee")
-    fig.update_yaxes(range=[y_min, y_max], showgrid=True, gridcolor="#eee")
-    return fig
-
-# ── 3D profile (PLAN COORDS) builder ────────────────────────────────────────
-def build_3d_profile_plan(
-    df: pd.DataFrame,
-    selected_bhs: List[str],
-    xy_ft: Dict[str, Tuple[float,float]],
-    y_min: float,
-    y_max: float,
-    title: str,
-    column_width_ft: float = 60.0,
-    vert_exag: float = 1.0,
-) -> go.Figure:
-    half = column_width_ft / 2.0
-    z0 = float(df['Elevation_To'].min() if not df.empty else 0.0)
-    def z_scale(z):  # display-only VE
-        return z0 + (z - z0) * vert_exag
-
-    meshes: list[go.Mesh3d] = []
-    used_types = set()
-
-    label_x, label_y, label_z, label_text = [], [], [], []
-
-    for bh in selected_bhs:
-        bore = df[df['Borehole'] == bh]
-        if bore.empty or bh not in xy_ft:
-            continue
-        x_center, y_center = xy_ft[bh]
-        x0, x1 = x_center - half, x_center + half
-        y0, y1 = y_center - half, y_center + half
-
-        top_el = float(bore['Elevation_From'].max())
-        label_x.append(x_center); label_y.append(y_center)
-        label_z.append(z_scale(top_el) + 3); label_text.append(str(bh))
-
-        for _, r in bore.iterrows():
-            z_bot = z_scale(float(r['Elevation_To']))
-            z_top = z_scale(float(r['Elevation_From']))
-            soil = str(r['Soil_Type'])
-            color = SOIL_COLOR_MAP.get(soil, '#cccccc')
-            used_types.add(soil)
-
-            xs = [x0, x1, x1, x0, x0, x1, x1, x0]
-            ys = [y0, y0, y1, y1, y0, y0, y1, y1]
-            zs = [z_bot, z_bot, z_bot, z_bot, z_top, z_top, z_top, z_top]
-            i = [0, 0, 4, 4, 0, 0, 1, 1, 2, 2, 3, 3]
-            j = [1, 2, 5, 6, 1, 5, 2, 6, 3, 7, 0, 4]
-            k = [2, 3, 6, 7, 5, 4, 6, 5, 7, 6, 4, 7]
-
-            meshes.append(go.Mesh3d(
-                x=xs, y=ys, z=zs, i=i, j=j, k=k,
-                color=color, opacity=0.96, flatshading=True,
-                lighting=dict(ambient=0.6, diffuse=0.6),
-                hoverinfo='skip', showlegend=False
-            ))
-
-    fig = go.Figure(data=meshes)
-
-    ordered_present = [s for s in ORDERED_SOIL_TYPES if s in used_types]
-    extra_present   = sorted([s for s in used_types if s not in set(ORDERED_SOIL_TYPES)])
-    legend_types    = ordered_present + extra_present
-
-    for soil in legend_types:
-        fig.add_trace(go.Scatter3d(
-            x=[None], y=[None], z=[None], mode='markers',
-            marker=dict(size=8, color=SOIL_COLOR_MAP.get(soil, '#cccccc')),
-            name=soil, showlegend=True
-        ))
-
-    if label_text:
-        fig.add_trace(go.Scatter3d(
-            x=label_x, y=label_y, z=label_z, mode='text', text=label_text,
-            textposition='top center', showlegend=False
-        ))
-
-    zmin_s, zmax_s = z_scale(y_min), z_scale(y_max)
-    fig.update_layout(
-        title=f"{title} — 3D (Plan Coordinates)",
-        scene=dict(
-            xaxis=dict(title='Easting (ft, local)', backgroundcolor='white', gridcolor='#eee'),
-            yaxis=dict(title='Northing (ft, local)', backgroundcolor='white', gridcolor='#eee'),
-            zaxis=dict(title=f'Elevation (ft, VE×{vert_exag:.2f})',
-                       range=[zmin_s, zmax_s], backgroundcolor='white', gridcolor='#eee'),
-            aspectmode='data',
-            camera=dict(eye=dict(x=1.4, y=1.2, z=0.8))
-        ),
-        height=780,
-        margin=dict(l=40, r=260, t=60, b=40),
-        legend=dict(yanchor='top', y=1, xanchor='left', x=1.02, bordercolor='#ddd', borderwidth=1)
-    )
-    return fig
-
 # ── map helpers ──────────────────────────────────────────────────────────────
 def add_labeled_point(fmap: folium.Map, lat: float, lon: float, name: str, color_hex: str):
     folium.CircleMarker(
@@ -382,15 +211,7 @@ if prop_file is not None:
     proposed_df = load_proposed_df(prop_file.getvalue())
 
 # ── 1) Map with Bore Logs ───────────────────────────────────────────────────
-# ── 1) Map with Bore Logs ───────────────────────────────────────────────────
 st.title("Map with Bore Logs")
-
-# Selection option
-show_choice = st.radio(
-    "Show on map:",
-    ["Existing only", "Proposed only", "Both"],
-    index=2
-)
 
 center_lat = float(pd.concat(
     [bh_coords[['Latitude']], proposed_df[['Latitude']] if not proposed_df.empty else bh_coords[['Latitude']]],
@@ -408,23 +229,13 @@ folium.raster_layers.TileLayer(
 ).add_to(fmap)
 LayerControl(position='topright').add_to(fmap)
 
-# Add points conditionally
-if show_choice in ["Existing only", "Both"]:
-    for _, r in bh_coords.iterrows():
-        add_labeled_point(
-            fmap, float(r['Latitude']), float(r['Longitude']),
-            str(r['Borehole']), EXISTING_TEXT_COLOR
-        )
-
-if show_choice in ["Proposed only", "Both"] and not proposed_df.empty:
+for _, r in bh_coords.iterrows():
+    add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), str(r['Borehole']), EXISTING_TEXT_COLOR)
+if not proposed_df.empty:
     for _, r in proposed_df.iterrows():
         nm = str(r.get("Name","")).strip() or "Proposed"
-        add_labeled_point(
-            fmap, float(r['Latitude']), float(r['Longitude']),
-            nm, PROPOSED_TEXT_COLOR
-        )
+        add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm, PROPOSED_TEXT_COLOR)
 
-# Drawing tool
 Draw(
     draw_options={"polyline":{"shapeOptions":{"color":"#3388ff","weight":4}},
                   "polygon":False,"circle":False,"rectangle":False,"marker":False,"circlemarker":False},
@@ -435,78 +246,3 @@ map_out = st_folium(
     fmap, height=600, use_container_width=True,
     returned_objects=["last_active_drawing","all_drawings"], key="map"
 )
-
-# ── 2) Section / Profile heading + Corridor slider ──────────────────────────
-st.title("Section / Profile (ft) — Soil")
-corridor_ft = st.slider("Corridor width (ft)", min_value=0, max_value=1000, value=200, step=10)
-
-if not st.session_state["section_line_coords"]:
-    st.info("Draw a polyline on the map (double-click to finish). The profiles will appear below automatically.")
-    st.stop()
-
-section_line = LineString(st.session_state["section_line_coords"])
-
-# Select boreholes within corridor
-rows = []
-for _, r in bh_coords.iterrows():
-    ch, off = chainage_and_offset_ft(section_line, float(r['Latitude']), float(r['Longitude']))
-    if off <= float(corridor_ft):
-        rows.append({"Borehole": r["Borehole"], "Chainage_ft": round(ch,2)})
-
-if not rows:
-    st.warning(f"No EXISTING boreholes within {corridor_ft:.0f} ft of the drawn section.")
-    st.stop()
-
-ordered_bhs = [r["Borehole"] for r in sorted(rows, key=lambda x: (x["Chainage_ft"], x["Borehole"]))]
-xpos = {r["Borehole"]: r["Chainage_ft"] for r in rows}
-
-# ── 3) Interactive 2D profile (chainage) — with manual width option ─────────
-plot_df = df[df['Borehole'].isin(ordered_bhs)]
-ymin_auto, ymax_auto = auto_y_limits(plot_df)
-fig_height_px = int(FIG_HEIGHT_IN * 50)
-
-# New controls: auto width vs manual slider
-suggested = dynamic_column_width(xpos)  # based on 80% of min gap
-auto_width = st.checkbox("Auto column width", value=True)
-if auto_width:
-    column_width_ft = None
-    st.caption(f"Auto width ≈ **{suggested:.1f} ft** (80% of nearest spacing)")
-else:
-    minw, maxw = 8.0, 300.0
-    default_val = float(min(max(suggested, 30.0), maxw))
-    column_width_ft = st.slider("Column width (ft)", min_value=minw, max_value=maxw,
-                                value=default_val, step=2.0)
-
-fig2d = build_plotly_profile(
-    df=plot_df, ordered_bhs=ordered_bhs, x_positions=xpos,
-    y_min=ymin_auto, y_max=ymax_auto, title=TITLE_DEFAULT,
-    column_width=column_width_ft,  # None → auto; float → manual
-    fig_height_px=fig_height_px
-)
-st.plotly_chart(fig2d, use_container_width=True, config={"displaylogo": False})
-
-# ── 4) Interactive 3D Borehole View (PLAN COORDS) ───────────────────────────
-st.markdown("### 3D Borehole View (ft, Plan Coordinates)")
-left, right = st.columns([1, 3])
-with left:
-    limit_to_corridor = st.checkbox("Limit to section corridor", value=True)
-with right:
-    vert_exag = st.slider("Vertical exaggeration (display only)", 0.5, 10.0, 2.0, 0.1)
-
-bhs_for_3d = ordered_bhs if limit_to_corridor else \
-             [bh for bh in bh_coords['Borehole'].tolist() if (df['Borehole'] == bh).any()]
-
-sel_coords = bh_coords[bh_coords['Borehole'].isin(bhs_for_3d)]
-lat0 = float(sel_coords['Latitude'].mean()); lon0 = float(sel_coords['Longitude'].mean())
-xy_map = {row['Borehole']: latlon_to_local_xy_ft(float(row['Latitude']), float(row['Longitude']), lat0, lon0)
-          for _, row in sel_coords.iterrows()}
-
-plot_df3d = df[df['Borehole'].isin(bhs_for_3d)]
-ymin_auto3d, ymax_auto3d = auto_y_limits(plot_df3d)
-
-fig3d = build_3d_profile_plan(
-    df=plot_df3d, selected_bhs=bhs_for_3d, xy_ft=xy_map,
-    y_min=ymin_auto3d, y_max=ymax_auto3d, title=TITLE_DEFAULT,
-    column_width_ft=60.0, vert_exag=vert_exag
-)
-st.plotly_chart(fig3d, use_container_width=True, config={"displaylogo": False})
