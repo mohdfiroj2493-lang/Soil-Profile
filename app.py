@@ -382,7 +382,15 @@ if prop_file is not None:
     proposed_df = load_proposed_df(prop_file.getvalue())
 
 # ── 1) Map with Bore Logs ───────────────────────────────────────────────────
+# ── 1) Map with Bore Logs ───────────────────────────────────────────────────
 st.title("Map with Bore Logs")
+
+# Selection option
+show_choice = st.radio(
+    "Show on map:",
+    ["Existing only", "Proposed only", "Both"],
+    index=2
+)
 
 center_lat = float(pd.concat(
     [bh_coords[['Latitude']], proposed_df[['Latitude']] if not proposed_df.empty else bh_coords[['Latitude']]],
@@ -400,13 +408,23 @@ folium.raster_layers.TileLayer(
 ).add_to(fmap)
 LayerControl(position='topright').add_to(fmap)
 
-for _, r in bh_coords.iterrows():
-    add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), str(r['Borehole']), EXISTING_TEXT_COLOR)
-if not proposed_df.empty:
+# Add points conditionally
+if show_choice in ["Existing only", "Both"]:
+    for _, r in bh_coords.iterrows():
+        add_labeled_point(
+            fmap, float(r['Latitude']), float(r['Longitude']),
+            str(r['Borehole']), EXISTING_TEXT_COLOR
+        )
+
+if show_choice in ["Proposed only", "Both"] and not proposed_df.empty:
     for _, r in proposed_df.iterrows():
         nm = str(r.get("Name","")).strip() or "Proposed"
-        add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm, PROPOSED_TEXT_COLOR)
+        add_labeled_point(
+            fmap, float(r['Latitude']), float(r['Longitude']),
+            nm, PROPOSED_TEXT_COLOR
+        )
 
+# Drawing tool
 Draw(
     draw_options={"polyline":{"shapeOptions":{"color":"#3388ff","weight":4}},
                   "polygon":False,"circle":False,"rectangle":False,"marker":False,"circlemarker":False},
@@ -417,26 +435,6 @@ map_out = st_folium(
     fmap, height=600, use_container_width=True,
     returned_objects=["last_active_drawing","all_drawings"], key="map"
 )
-
-def extract_linestring(mo) -> LineString | None:
-    lad = mo.get("last_active_drawing")
-    if isinstance(lad, dict):
-        geom = lad.get("geometry", {})
-        if geom.get("type") == "LineString" and len(geom.get("coordinates", [])) >= 2:
-            return LineString(geom["coordinates"])
-    if mo.get("all_drawings") and isinstance(mo["all_drawings"], dict):
-        for feat in reversed(mo["all_drawings"].get("features", [])):
-            geom = feat.get("geometry", {})
-            if geom.get("type") == "LineString" and len(geom.get("coordinates", [])) >= 2:
-                return LineString(geom["coordinates"])
-    return None
-
-if "section_line_coords" not in st.session_state:
-    st.session_state["section_line_coords"] = None
-
-maybe_line = extract_linestring(map_out or {})
-if maybe_line is not None:
-    st.session_state["section_line_coords"] = list(map(list, maybe_line.coords))
 
 # ── 2) Section / Profile heading + Corridor slider ──────────────────────────
 st.title("Section / Profile (ft) — Soil")
