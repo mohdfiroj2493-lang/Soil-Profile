@@ -434,4 +434,137 @@ LayerControl(position='topright').add_to(fmap)
 for _, r in bh_coords.iterrows():
     add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), str(r['Borehole']), EXISTING_TEXT_COLOR)
 if not proposed_df.empty:
-    for _, r in
+    for _, r in proposed_df.iterrows():
+        nm = str(r.get("Name",""))..strip() or "Proposed"
+        add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm, PROPOSED_TEXT_COLOR)
+
+Draw(
+    draw_options={"polyline":{"shapeOptions":{"color":"#3388ff","weight":4}},
+                  "polygon":False,"circle":False,"rectangle":False,"marker":False,"circlemarker":False},
+    edit_options={"edit":True,"remove":True}
+).add_to(fmap)
+
+map_out = st_folium(
+    fmap, height=600, use_container_width=True,
+    returned_objects=["last_active_drawing","all_drawings"], key="map"
+)
+
+def extract_linestring(mo) -> LineString | None:
+    lad = mo.get("last_active_drawing")
+    if isinstance(lad, dict):
+        geom = lad.get("geometry", {})
+        if geom.get("type") == "LineString" and len(geom.get("coordinates", [])) >= 2:
+            return LineString(geom["coordinates"])
+    if mo.get("all_drawings") and isinstance(mo["all_drawings"], dict):
+        for feat in reversed(mo["all_drawings"].get("features", [])):
+            geom = feat.get("geometry", {})
+            if geom.get("type") == "LineString" and len(geom.get("coordinates", [])) >= 2:
+                return LineString(geom["coordinates"])
+    return None
+
+if "section_line_coords" not in st.session_state:
+    st.session_state["section_line_coords"] = None
+
+maybe_line = extract_linestring(map_out or {})
+if maybe_line is not None:
+    st.session_state["section_line_coords"] = list(map(list, maybe_line.coords))
+
+# ── 2) Section / Profile heading + Corridor slider ──────────────────────────
+
+st.title("Section / Profile (ft) — Soil")
+corridor_ft = st.slider("Corridor width (ft)", min_value=0, max_value=1000, value=200, step=10)
+
+# NEW: label and export controls
+with st.expander("Label & Export Options", expanded=True):
+    colA, colB, colC, colD = st.columns([1,1,1,1])
+    with colA:
+        show_layer_text = st.checkbox("Show per-layer text (SPT)", value=True, help="Toggle the small 'SM (N=20)' labels.")
+    with colB:
+        show_big_codes = st.checkbox("Show big soil codes", value=True, help="Overlay ML/CL/SM codes per segment.")
+    with colC:
+        big_code_angle = st.slider("Code angle", 0, 90, 90, 5)
+    with colD:
+        big_code_opacity = st.slider("Code opacity", 0.1, 0.9, 0.28, 0.02)
+
+if not st.session_state["section_line_coords"]:
+    st.info("Draw a polyline on the map (double-click to finish). The profiles will appear below automatically.")
+    st.stop()
+
+section_line = LineString(st.session_state["section_line_coords"])
+
+# Select boreholes within corridor
+rows = []
+for _, r in bh_coords.iterrows():
+    ch, off = chainage_and_offset_ft(section_line, float(r['Latitude']), float(r['Longitude']))
+    if off <= float(corridor_ft):
+        rows.append({"Borehole": r["Borehole"], "Chainage_ft": round(ch,2)})
+
+if not rows:
+    st.warning(f"No EXISTING boreholes within {corridor_ft:.0f} ft of the drawn section.")
+    st.stop()
+
+ordered_bhs = [r["Borehole"] for r in sorted(rows, key=lambda x: (x["Chainage_ft"], x["Borehole"]))]
+xpos = {r["Borehole"]: r["Chainage_ft"] for r in rows}
+
+# ── 3) Interactive 2D profile (chainage) — with manual width option ─────────
+
+plot_df = df[df['Borehole'].isin(ordered_bhs)]
+ymin_auto, ymax_auto = auto_y_limits(plot_df)
+fig_height_px = int(FIG_HEIGHT_IN * 50)
+
+# New controls: auto width vs manual slider
+suggested = dynamic_column_width(xpos)  # based on 80% of min gap
+auto_width = st.checkbox("Auto column width", value=True)
+if auto_width:
+    column_width_ft = None
+    st.caption(f"Auto width ≈ **{suggested:.1f} ft** (80% of nearest spacing)")
+else:
+    minw, maxw = 8.0, 300.0
+    default_val = float(min(max(suggested, 30.0), maxw))
+    column_width_ft = st.slider("Column width (ft)", min_value=minw, max_value=maxw,
+                                value=default_val, step=2.0)
+
+fig2d = build_plotly_profile(
+    df=plot_df, ordered_bhs=ordered_bhs, x_positions=xpos,
+    y_min=ymin_auto, y_max=ymax_auto, title=TITLE_DEFAULT,
+    column_width=column_width_ft,  # None → auto; float → manual
+    show_layer_text=show_layer_text, show_big_codes=show_big_codes,
+    big_code_angle=big_code_angle, big_code_opacity=big_code_opacity,
+    fig_height_px=fig_height_px
+)
+
+# High-res export settings (visible in modebar)
+modebar_cfg = {
+    "displaylogo": False,
+    "toImageButtonOptions": {"format": "png", "filename": "soil_profile", "scale": 4},  # ← crisp export
+}
+
+st.plotly_chart(fig2d, use_container_width=True, config=modebar_cfg)
+
+# ── 4) Interactive 3D Borehole View (PLAN COORDS) ───────────────────────────
+
+st.markdown("### 3D Borehole View (ft, Plan Coordinates)")
+left, right = st.columns([1, 3])
+with left:
+    limit_to_corridor = st.checkbox("Limit to section corridor", value=True)
+with right:
+    vert_exag = st.slider("Vertical exaggeration (display only)", 0.5, 10.0, 2.0, 0.1)
+
+bhs_for_3d = ordered_bhs if limit_to_corridor else \
+             [bh for bh in bh_coords['Borehole'].tolist() if (df['Borehole'] == bh).any()]
+
+sel_coords = bh_coords[bh_coords['Borehole'].isin(bhs_for_3d)]
+lat0 = float(sel_coords['Latitude'].mean()); lon0 = float(sel_coords['Longitude'].mean())
+xy_map = {row['Borehole']: latlon_to_local_xy_ft(float(row['Latitude']), float(row['Longitude']), lat0, lon0)
+          for _, row in sel_coords.iterrows()}
+
+plot_df3d = df[df['Borehole'].isin(bhs_for_3d)]
+ymin_auto3d, ymax_auto3d = auto_y_limits(plot_df3d)
+
+fig3d = build_3d_profile_plan(
+    df=plot_df3d, selected_bhs=bhs_for_3d, xy_ft=xy_map,
+    y_min=ymin_auto3d, y_max=ymax_auto3d, title=TITLE_DEFAULT,
+    column_width_ft=60.0, vert_exag=vert_exag
+)
+
+st.plotly_chart(fig3d, use_container_width=True, config={"displaylogo": False, "toImageButtonOptions": {"scale": 3}})
