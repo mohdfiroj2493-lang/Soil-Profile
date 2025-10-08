@@ -435,7 +435,7 @@ for _, r in bh_coords.iterrows():
     add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), str(r['Borehole']), EXISTING_TEXT_COLOR)
 if not proposed_df.empty:
     for _, r in proposed_df.iterrows():
-        nm = str(r.get("Name",""))..strip() or "Proposed"
+        nm = str(r.get("Name","")).strip() or "Proposed"
         add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm, PROPOSED_TEXT_COLOR)
 
 Draw(
