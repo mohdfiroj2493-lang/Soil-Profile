@@ -1,6 +1,9 @@
 # app.py — Map → Section slider → 2D + 3D (plan) profiles
-# Adds optional big soil-code labels (ML/CL/SM/…) per segment,
-# a toggle to show/hide per-layer text, and higher-quality figure/export.
+# Per your request: remove big soil-code overlays and add
+# (1) toggle for soil codes text (ML/SM/etc.)
+# (2) toggle for SPT N-value text
+# (3) multiselect to include/exclude specific soil types (ML, SM, etc.) from the plot
+# Also keeps high‑quality export and your column-width slider.
 
 from typing import Dict, List, Tuple, Optional
 import io
@@ -26,7 +29,7 @@ CIRCLE_FILL_OPACITY = 0.95
 LABEL_DX_PX, LABEL_DY_PX = 8, -10
 
 TITLE_DEFAULT = "Soil Profile"
-FIG_HEIGHT_IN = 22.0  # ↑ a bit taller for clearer labels
+FIG_HEIGHT_IN = 22.0  # a bit taller for clarity
 
 # Soil colors (extend as needed)
 SOIL_COLOR_MAP = {
@@ -188,10 +191,8 @@ def build_plotly_profile(
     df: pd.DataFrame, ordered_bhs: List[str], x_positions: Dict[str,float],
     y_min: float, y_max: float, title: str,
     column_width: Optional[float],
-    show_layer_text: bool = True,
-    show_big_codes: bool = False,
-    big_code_angle: int = 90,
-    big_code_opacity: float = 0.28,
+    show_codes: bool = False,
+    show_spt: bool = True,
     fig_height_px: int = 1000,
 ) -> go.Figure:
     # Width is either manual (passed) or auto from spacing
@@ -211,9 +212,6 @@ def build_plotly_profile(
         if w >= 30: return 12
         if w >= 18: return 11
         return 10
-    def big_code_font_for(w):
-        # Large but responsive; rotated text stays readable
-        return max(12, min(26, int(w * 0.6)))
 
     inner_font = inner_font_for(width)
     bh_font    = bh_font_for(width)
@@ -242,19 +240,18 @@ def build_plotly_profile(
             shapes.append(dict(type="rect", x0=x-half, x1=x+half, y0=et, y1=ef,
                                line=dict(color="#000", width=1.3), fillcolor=color))
 
-            if show_layer_text:
+            # Inner labels controlled by toggles
+            if show_codes or show_spt:
+                if show_codes and show_spt:
+                    txt = f"{soil} ({spt})"
+                elif show_codes:
+                    txt = soil
+                else:
+                    txt = spt
                 annotations.append(dict(
-                    x=x, y=(ef+et)/2, text=f"{soil} ({spt})", showarrow=False,
+                    x=x, y=(ef+et)/2, text=txt, showarrow=False,
                     xanchor="center", yanchor="middle",
                     font=dict(size=inner_font, family="Arial", color="#111")
-                ))
-
-            if show_big_codes:
-                annotations.append(dict(
-                    x=x, y=(ef+et)/2, text=soil, showarrow=False,
-                    xanchor="center", yanchor="middle", textangle=big_code_angle,
-                    opacity=big_code_opacity,
-                    font=dict(size=big_code_font_for(width), family="Arial Black", color="#000")
                 ))
 
     # Legend: preferred order first, then any extra
@@ -435,7 +432,7 @@ for _, r in bh_coords.iterrows():
     add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), str(r['Borehole']), EXISTING_TEXT_COLOR)
 if not proposed_df.empty:
     for _, r in proposed_df.iterrows():
-        nm = str(r.get("Name","")).strip() or "Proposed"
+        nm = str(r.get("Name", "")).strip() or "Proposed"  # fixed typo from earlier
         add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm, PROPOSED_TEXT_COLOR)
 
 Draw(
@@ -474,17 +471,17 @@ if maybe_line is not None:
 st.title("Section / Profile (ft) — Soil")
 corridor_ft = st.slider("Corridor width (ft)", min_value=0, max_value=1000, value=200, step=10)
 
-# NEW: label and export controls
-with st.expander("Label & Export Options", expanded=True):
-    colA, colB, colC, colD = st.columns([1,1,1,1])
+# Labels/filters/export controls
+with st.expander("Labels, Filters & Export", expanded=True):
+    colA, colB, colC = st.columns([1,1,2])
+    present_types = sorted([t for t in df['Soil_Type'].dropna().unique().tolist()])
     with colA:
-        show_layer_text = st.checkbox("Show per-layer text (SPT)", value=True, help="Toggle the small 'SM (N=20)' labels.")
+        show_codes = st.checkbox("Show soil code (ML/SM/…)", value=False)
     with colB:
-        show_big_codes = st.checkbox("Show big soil codes", value=True, help="Overlay ML/CL/SM codes per segment.")
+        show_spt = st.checkbox("Show SPT N value", value=True)
     with colC:
-        big_code_angle = st.slider("Code angle", 0, 90, 90, 5)
-    with colD:
-        big_code_opacity = st.slider("Code opacity", 0.1, 0.9, 0.28, 0.02)
+        selected_types = st.multiselect("Soil types to include", options=present_types, default=present_types,
+                                        help="Uncheck a type (e.g., ML or SM) to hide those layers from the profile.")
 
 if not st.session_state["section_line_coords"]:
     st.info("Draw a polyline on the map (double-click to finish). The profiles will appear below automatically.")
@@ -509,10 +506,13 @@ xpos = {r["Borehole"]: r["Chainage_ft"] for r in rows}
 # ── 3) Interactive 2D profile (chainage) — with manual width option ─────────
 
 plot_df = df[df['Borehole'].isin(ordered_bhs)]
+# Apply soil-type filtering
+plot_df = plot_df[plot_df['Soil_Type'].isin(selected_types)]
+
 ymin_auto, ymax_auto = auto_y_limits(plot_df)
 fig_height_px = int(FIG_HEIGHT_IN * 50)
 
-# New controls: auto width vs manual slider
+# Auto width vs manual slider
 suggested = dynamic_column_width(xpos)  # based on 80% of min gap
 auto_width = st.checkbox("Auto column width", value=True)
 if auto_width:
@@ -527,16 +527,15 @@ else:
 fig2d = build_plotly_profile(
     df=plot_df, ordered_bhs=ordered_bhs, x_positions=xpos,
     y_min=ymin_auto, y_max=ymax_auto, title=TITLE_DEFAULT,
-    column_width=column_width_ft,  # None → auto; float → manual
-    show_layer_text=show_layer_text, show_big_codes=show_big_codes,
-    big_code_angle=big_code_angle, big_code_opacity=big_code_opacity,
+    column_width=column_width_ft,
+    show_codes=show_codes, show_spt=show_spt,
     fig_height_px=fig_height_px
 )
 
-# High-res export settings (visible in modebar)
+# High-res export
 modebar_cfg = {
     "displaylogo": False,
-    "toImageButtonOptions": {"format": "png", "filename": "soil_profile", "scale": 4},  # ← crisp export
+    "toImageButtonOptions": {"format": "png", "filename": "soil_profile", "scale": 4},
 }
 
 st.plotly_chart(fig2d, use_container_width=True, config=modebar_cfg)
