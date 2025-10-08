@@ -1,5 +1,6 @@
 # app.py — Map → Section slider → 2D + 3D (plan) profiles
-# Adds manual "Column width (ft)" slider for the 2D profile
+# Adds optional big soil-code labels (ML/CL/SM/…) per segment,
+# a toggle to show/hide per-layer text, and higher-quality figure/export.
 
 from typing import Dict, List, Tuple, Optional
 import io
@@ -25,7 +26,7 @@ CIRCLE_FILL_OPACITY = 0.95
 LABEL_DX_PX, LABEL_DY_PX = 8, -10
 
 TITLE_DEFAULT = "Soil Profile"
-FIG_HEIGHT_IN = 20.0  # inches → pixels with *50 later
+FIG_HEIGHT_IN = 22.0  # ↑ a bit taller for clearer labels
 
 # Soil colors (extend as needed)
 SOIL_COLOR_MAP = {
@@ -56,6 +57,7 @@ RENAME_MAP = {
     'Bore Log':'Borehole','Elevation From':'Elevation_From','Elevation To':'Elevation_To',
     'Soil Layer Description':'Soil_Type','Latitude':'Latitude','Longitude':'Longitude','SPT N-Value':'SPT',
 }
+
 def compute_spt_avg(value):
     if value is None:
         return "N = N/A"
@@ -92,6 +94,7 @@ def make_borehole_coords(df: pd.DataFrame) -> pd.DataFrame:
     return df.groupby('Borehole')[['Latitude','Longitude']].first().reset_index()
 
 # Proposed points helpers
+
 def normalize_cols_general(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
@@ -124,6 +127,7 @@ def load_proposed_df(uploaded_bytes: bytes) -> pd.DataFrame:
         return pd.DataFrame(columns=["Latitude","Longitude","Name"])
 
 # ── geometry helpers ─────────────────────────────────────────────────────────
+
 def total_geodesic_length_ft_of_linestring(line: LineString) -> float:
     coords = list(line.coords)
     total = 0.0
@@ -145,6 +149,7 @@ def chainage_and_offset_ft(line: LineString, lat: float, lon: float) -> Tuple[fl
     return float(chain_ft), float(off_ft)
 
 # Lat/Lon → local plan coordinates (ft), origin at (lat0,lon0)
+
 def latlon_to_local_xy_ft(lat: float, lon: float, lat0: float, lon0: float) -> Tuple[float, float]:
     x_m = geodesic((lat0, lon0), (lat0, lon)).meters   # Easting
     y_m = geodesic((lat0, lon0), (lat,  lon0)).meters   # Northing
@@ -162,6 +167,7 @@ def auto_y_limits(df_subset: pd.DataFrame, pad_ratio: float = 0.05) -> Tuple[flo
     return y_min - pad, y_max + pad
 
 # Auto width suggestion from spacing
+
 def dynamic_column_width(x_positions: Dict[str, float],
                          default_width: float = 60.0,
                          min_width: float = 8.0,
@@ -177,11 +183,16 @@ def dynamic_column_width(x_positions: Dict[str, float],
     return max(min_width, width)
 
 # ── 2D profile builder ───────────────────────────────────────────────────────
+
 def build_plotly_profile(
     df: pd.DataFrame, ordered_bhs: List[str], x_positions: Dict[str,float],
     y_min: float, y_max: float, title: str,
     column_width: Optional[float],
-    fig_height_px: int = 900
+    show_layer_text: bool = True,
+    show_big_codes: bool = False,
+    big_code_angle: int = 90,
+    big_code_opacity: float = 0.28,
+    fig_height_px: int = 1000,
 ) -> go.Figure:
     # Width is either manual (passed) or auto from spacing
     width = column_width if column_width is not None else dynamic_column_width(x_positions)
@@ -189,17 +200,20 @@ def build_plotly_profile(
 
     # Adaptive label sizes depending on width
     def inner_font_for(w):
-        if w >= 50: return 11
-        if w >= 35: return 10
-        if w >= 22: return 9
-        if w >= 14: return 8
-        return 7
+        if w >= 60: return 12
+        if w >= 45: return 11
+        if w >= 30: return 10
+        if w >= 18: return 9
+        return 8
     def bh_font_for(w):
-        if w >= 50: return 13
-        if w >= 35: return 12
-        if w >= 22: return 11
-        if w >= 14: return 10
-        return 9
+        if w >= 60: return 14
+        if w >= 45: return 13
+        if w >= 30: return 12
+        if w >= 18: return 11
+        return 10
+    def big_code_font_for(w):
+        # Large but responsive; rotated text stays readable
+        return max(12, min(26, int(w * 0.6)))
 
     inner_font = inner_font_for(width)
     bh_font    = bh_font_for(width)
@@ -226,12 +240,22 @@ def build_plotly_profile(
             if soil not in SOIL_COLOR_MAP: unknown_types.add(soil)
             used_types.add(soil)
             shapes.append(dict(type="rect", x0=x-half, x1=x+half, y0=et, y1=ef,
-                               line=dict(color="#000", width=1), fillcolor=color))
-            annotations.append(dict(
-                x=x, y=(ef+et)/2, text=f"{soil} ({spt})", showarrow=False,
-                xanchor="center", yanchor="middle",
-                font=dict(size=inner_font, family="Arial", color="#111")
-            ))
+                               line=dict(color="#000", width=1.3), fillcolor=color))
+
+            if show_layer_text:
+                annotations.append(dict(
+                    x=x, y=(ef+et)/2, text=f"{soil} ({spt})", showarrow=False,
+                    xanchor="center", yanchor="middle",
+                    font=dict(size=inner_font, family="Arial", color="#111")
+                ))
+
+            if show_big_codes:
+                annotations.append(dict(
+                    x=x, y=(ef+et)/2, text=soil, showarrow=False,
+                    xanchor="center", yanchor="middle", textangle=big_code_angle,
+                    opacity=big_code_opacity,
+                    font=dict(size=big_code_font_for(width), family="Arial Black", color="#000")
+                ))
 
     # Legend: preferred order first, then any extra
     ordered_present = [s for s in ORDERED_SOIL_TYPES if s in used_types]
@@ -247,17 +271,21 @@ def build_plotly_profile(
     xs = list(x_positions.values())
     xmin = (min(xs)-half) if xs else -half
     xmax = (max(xs)+3*half) if xs else half
+
     fig.update_layout(
-        title=title, xaxis_title="Chainage along section (ft)", yaxis_title="Elevation (ft)",
+        title=title,
+        font=dict(family="Inter, Arial, sans-serif"),
+        xaxis_title="Chainage along section (ft)", yaxis_title="Elevation (ft)",
         shapes=shapes, annotations=annotations, height=fig_height_px,
-        margin=dict(l=60, r=260, t=60, b=60), plot_bgcolor="white",
-        legend=dict(yanchor="top", y=1, xanchor="left", x=1.02, bordercolor="#ddd", borderwidth=1)
+        margin=dict(l=70, r=260, t=70, b=70), plot_bgcolor="white",
+        legend=dict(yanchor="top", y=1, xanchor="left", x=1.02, bordercolor="#ddd", borderwidth=1),
     )
-    fig.update_xaxes(range=[xmin, xmax], showgrid=True, gridcolor="#eee")
-    fig.update_yaxes(range=[y_min, y_max], showgrid=True, gridcolor="#eee")
+    fig.update_xaxes(range=[xmin, xmax], showgrid=True, gridcolor="#eaeaea", zeroline=False)
+    fig.update_yaxes(range=[y_min, y_max], showgrid=True, gridcolor="#eaeaea", zeroline=False, scaleanchor=None)
     return fig
 
 # ── 3D profile (PLAN COORDS) builder ────────────────────────────────────────
+
 def build_3d_profile_plan(
     df: pd.DataFrame,
     selected_bhs: List[str],
@@ -348,6 +376,7 @@ def build_3d_profile_plan(
     return fig
 
 # ── map helpers ──────────────────────────────────────────────────────────────
+
 def add_labeled_point(fmap: folium.Map, lat: float, lon: float, name: str, color_hex: str):
     folium.CircleMarker(
         location=(lat, lon), radius=CIRCLE_RADIUS_PX, color=CIRCLE_STROKE,
@@ -362,6 +391,7 @@ def add_labeled_point(fmap: folium.Map, lat: float, lon: float, name: str, color
     folium.Marker(location=(lat, lon), icon=folium.DivIcon(html=label_html, icon_size=(0,0))).add_to(fmap)
 
 # ── UI ───────────────────────────────────────────────────────────────────────
+
 st.set_page_config(page_title="Borehole Section Profile", layout="wide")
 
 # Sidebar uploads
@@ -382,6 +412,7 @@ if prop_file is not None:
     proposed_df = load_proposed_df(prop_file.getvalue())
 
 # ── 1) Map with Bore Logs ───────────────────────────────────────────────────
+
 st.title("Map with Bore Logs")
 
 center_lat = float(pd.concat(
@@ -403,112 +434,4 @@ LayerControl(position='topright').add_to(fmap)
 for _, r in bh_coords.iterrows():
     add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), str(r['Borehole']), EXISTING_TEXT_COLOR)
 if not proposed_df.empty:
-    for _, r in proposed_df.iterrows():
-        nm = str(r.get("Name","")).strip() or "Proposed"
-        add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm, PROPOSED_TEXT_COLOR)
-
-Draw(
-    draw_options={"polyline":{"shapeOptions":{"color":"#3388ff","weight":4}},
-                  "polygon":False,"circle":False,"rectangle":False,"marker":False,"circlemarker":False},
-    edit_options={"edit":True,"remove":True}
-).add_to(fmap)
-
-map_out = st_folium(
-    fmap, height=600, use_container_width=True,
-    returned_objects=["last_active_drawing","all_drawings"], key="map"
-)
-
-def extract_linestring(mo) -> LineString | None:
-    lad = mo.get("last_active_drawing")
-    if isinstance(lad, dict):
-        geom = lad.get("geometry", {})
-        if geom.get("type") == "LineString" and len(geom.get("coordinates", [])) >= 2:
-            return LineString(geom["coordinates"])
-    if mo.get("all_drawings") and isinstance(mo["all_drawings"], dict):
-        for feat in reversed(mo["all_drawings"].get("features", [])):
-            geom = feat.get("geometry", {})
-            if geom.get("type") == "LineString" and len(geom.get("coordinates", [])) >= 2:
-                return LineString(geom["coordinates"])
-    return None
-
-if "section_line_coords" not in st.session_state:
-    st.session_state["section_line_coords"] = None
-
-maybe_line = extract_linestring(map_out or {})
-if maybe_line is not None:
-    st.session_state["section_line_coords"] = list(map(list, maybe_line.coords))
-
-# ── 2) Section / Profile heading + Corridor slider ──────────────────────────
-st.title("Section / Profile (ft) — Soil")
-corridor_ft = st.slider("Corridor width (ft)", min_value=0, max_value=1000, value=200, step=10)
-
-if not st.session_state["section_line_coords"]:
-    st.info("Draw a polyline on the map (double-click to finish). The profiles will appear below automatically.")
-    st.stop()
-
-section_line = LineString(st.session_state["section_line_coords"])
-
-# Select boreholes within corridor
-rows = []
-for _, r in bh_coords.iterrows():
-    ch, off = chainage_and_offset_ft(section_line, float(r['Latitude']), float(r['Longitude']))
-    if off <= float(corridor_ft):
-        rows.append({"Borehole": r["Borehole"], "Chainage_ft": round(ch,2)})
-
-if not rows:
-    st.warning(f"No EXISTING boreholes within {corridor_ft:.0f} ft of the drawn section.")
-    st.stop()
-
-ordered_bhs = [r["Borehole"] for r in sorted(rows, key=lambda x: (x["Chainage_ft"], x["Borehole"]))]
-xpos = {r["Borehole"]: r["Chainage_ft"] for r in rows}
-
-# ── 3) Interactive 2D profile (chainage) — with manual width option ─────────
-plot_df = df[df['Borehole'].isin(ordered_bhs)]
-ymin_auto, ymax_auto = auto_y_limits(plot_df)
-fig_height_px = int(FIG_HEIGHT_IN * 50)
-
-# New controls: auto width vs manual slider
-suggested = dynamic_column_width(xpos)  # based on 80% of min gap
-auto_width = st.checkbox("Auto column width", value=True)
-if auto_width:
-    column_width_ft = None
-    st.caption(f"Auto width ≈ **{suggested:.1f} ft** (80% of nearest spacing)")
-else:
-    minw, maxw = 8.0, 300.0
-    default_val = float(min(max(suggested, 30.0), maxw))
-    column_width_ft = st.slider("Column width (ft)", min_value=minw, max_value=maxw,
-                                value=default_val, step=2.0)
-
-fig2d = build_plotly_profile(
-    df=plot_df, ordered_bhs=ordered_bhs, x_positions=xpos,
-    y_min=ymin_auto, y_max=ymax_auto, title=TITLE_DEFAULT,
-    column_width=column_width_ft,  # None → auto; float → manual
-    fig_height_px=fig_height_px
-)
-st.plotly_chart(fig2d, use_container_width=True, config={"displaylogo": False})
-
-# ── 4) Interactive 3D Borehole View (PLAN COORDS) ───────────────────────────
-st.markdown("### 3D Borehole View (ft, Plan Coordinates)")
-left, right = st.columns([1, 3])
-with left:
-    limit_to_corridor = st.checkbox("Limit to section corridor", value=True)
-with right:
-    vert_exag = st.slider("Vertical exaggeration (display only)", 0.5, 10.0, 2.0, 0.1)
-
-bhs_for_3d = ordered_bhs if limit_to_corridor else \
-             [bh for bh in bh_coords['Borehole'].tolist() if (df['Borehole'] == bh).any()]
-
-sel_coords = bh_coords[bh_coords['Borehole'].isin(bhs_for_3d)]
-lat0 = float(sel_coords['Latitude'].mean()); lon0 = float(sel_coords['Longitude'].mean())
-xy_map = {row['Borehole']: latlon_to_local_xy_ft(float(row['Latitude']), float(row['Longitude']), lat0, lon0)
-          for _, row in sel_coords.iterrows()}
-
-plot_df3d = df[df['Borehole'].isin(bhs_for_3d)]
-ymin_auto3d, ymax_auto3d = auto_y_limits(plot_df3d)
-
-fig3d = build_3d_profile_plan(
-    df=plot_df3d, selected_bhs=bhs_for_3d, xy_ft=xy_map,
-    y_min=ymin_auto3d, y_max=ymax_auto3d, title=TITLE_DEFAULT,
-    column_width_ft=60.0, vert_exag=vert_exag
-)
-st.plotly_chart(fig3d, use_container_width=True, config={"displaylogo": False})
+    for _, r in
