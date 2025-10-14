@@ -59,6 +59,8 @@ ORDERED_SOIL_TYPES = [
 RENAME_MAP = {
     'Bore Log':'Borehole','Elevation From':'Elevation_From','Elevation To':'Elevation_To',
     'Soil Layer Description':'Soil_Type','Latitude':'Latitude','Longitude':'Longitude','SPT N-Value':'SPT',
+    # Water elevation from Excel; works after we strip column names:
+    'Elevation Water Table':'Water_Elev',
 }
 
 def compute_spt_avg(value):
@@ -79,17 +81,27 @@ def compute_spt_avg(value):
 @st.cache_data(show_spinner=False)
 def load_df_from_excel(uploaded_file) -> pd.DataFrame:
     df = pd.read_excel(uploaded_file)
+    # Normalize headers (this removes trailing space from "Elevation Water Table ")
     df.columns = df.columns.str.strip()
     df.rename(columns=RENAME_MAP, inplace=True)
+
     # normalize soil names (Topsoil) or take code in parentheses
     df['Soil_Type'] = df['Soil_Type'].astype(str)
     df['Soil_Type'] = df['Soil_Type'].str.extract(r'\((.*?)\)').fillna(
         df['Soil_Type'].str.replace(r'^.*top\s*soil.*$', 'Topsoil', case=False, regex=True)
     )
+
     df['Latitude']  = pd.to_numeric(df['Latitude'],  errors='coerce')
     df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
     df = df.dropna(subset=['Latitude','Longitude']).copy()
     df['SPT_Label'] = df['SPT'].apply(compute_spt_avg)
+
+    # Parse water elevation if present
+    if 'Water_Elev' in df.columns:
+        df['Water_Elev'] = pd.to_numeric(df['Water_Elev'], errors='coerce')
+    else:
+        df['Water_Elev'] = pd.NA
+
     return df
 
 @st.cache_data(show_spinner=False)
@@ -214,6 +226,9 @@ def build_plotly_profile(
     shapes, annotations = [], []
     used_types = set()
 
+    # Collect water elevations per BH (one marker per BH)
+    water_x, water_y = [], []
+
     for bh in ordered_bhs:
         bore = df[df['Borehole'] == bh]
         if bore.empty:
@@ -225,6 +240,15 @@ def build_plotly_profile(
             xanchor="center", yanchor="bottom",
             font=dict(size=bh_font, family="Arial Black", color="#111")
         ))
+
+        # Water elevation (if present)
+        if 'Water_Elev' in bore.columns:
+            wt_series = bore['Water_Elev'].dropna()
+            if not wt_series.empty:
+                wt = float(wt_series.iloc[0])
+                water_x.append(x)
+                water_y.append(wt)
+
         for _, r in bore.iterrows():
             ef, et = float(r['Elevation_From']), float(r['Elevation_To'])
             soil = str(r['Soil_Type'])
@@ -258,6 +282,16 @@ def build_plotly_profile(
         fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers",
                                  marker=dict(size=12, color=SOIL_COLOR_MAP.get(soil, "#cccccc")),
                                  name=soil, showlegend=True))
+
+    # Blue triangle markers for water elevation
+    if water_x:
+        fig.add_trace(
+            go.Scatter(
+                x=water_x, y=water_y, mode="markers",
+                marker=dict(symbol="triangle-down", size=14, color="#1e88e5"),
+                name="Water Table", hovertemplate="Water Elev: %{y:.2f} ft<extra></extra>"
+            )
+        )
 
     xs = list(x_positions.values())
     xmin = (min(xs)-half) if xs else -half
