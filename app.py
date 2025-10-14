@@ -7,6 +7,7 @@
 
 from typing import Dict, List, Tuple, Optional
 import io
+import math
 
 import pandas as pd
 from geopy.distance import geodesic
@@ -81,7 +82,7 @@ def compute_spt_avg(value):
 @st.cache_data(show_spinner=False)
 def load_df_from_excel(uploaded_file) -> pd.DataFrame:
     df = pd.read_excel(uploaded_file)
-    # Normalize headers (removes trailing space from "Elevation Water Table ")
+    # Normalize headers (this removes trailing space from "Elevation Water Table ")
     df.columns = df.columns.str.strip()
     df.rename(columns=RENAME_MAP, inplace=True)
 
@@ -193,6 +194,26 @@ def dynamic_column_width(x_positions: Dict[str, float],
     width = min(default_width, fraction_of_min_gap * min_gap)
     return max(min_width, width)
 
+# ── grid step helper ─────────────────────────────────────────────────────────
+def _nice_step(rng: float, target: int = 10) -> float:
+    """Choose a 'nice' step size for grid spacing over range rng."""
+    if rng <= 0:
+        return 1.0
+    rough = rng / max(1, target)
+    expv = math.floor(math.log10(rough))
+    frac = rough / (10 ** expv)
+    if frac <= 1:
+        nice = 1
+    elif frac <= 2:
+        nice = 2
+    elif frac <= 2.5:
+        nice = 2.5
+    elif frac <= 5:
+        nice = 5
+    else:
+        nice = 10
+    return nice * (10 ** expv)
+
 # ── 2D profile builder ───────────────────────────────────────────────────────
 def build_plotly_profile(
     df: pd.DataFrame, ordered_bhs: List[str], x_positions: Dict[str,float],
@@ -205,6 +226,11 @@ def build_plotly_profile(
     # Width is either manual (passed) or auto from spacing
     width = column_width if column_width is not None else dynamic_column_width(x_positions)
     half = width / 2.0
+
+    # Precompute x-range so we can draw background grid first
+    xs = list(x_positions.values())
+    xmin = (min(xs)-half) if xs else -half
+    xmax = (max(xs)+3*half) if xs else half
 
     # Adaptive label sizes depending on width
     def inner_font_for(w):
@@ -223,12 +249,48 @@ def build_plotly_profile(
     inner_font = inner_font_for(width)
     bh_font    = bh_font_for(width)
 
-    shapes, annotations = [], []
-    used_types = set()
+    # We'll build shapes in two layers (both "below"), but order matters:
+    # 1) grid_lines (drawn first -> furthest back)
+    # 2) soil_rects  (drawn after -> above the grid)
+    grid_lines: List[dict] = []
+    soil_rects: List[dict] = []
+    annotations = []
+    used_types  = set()
+
+    # --- Background grid as shapes (horizontal + vertical), behind everything ---
+    yrng = max(1.0, y_max - y_min)
+    xrng = max(1.0, xmax - xmin)
+    y_step = _nice_step(yrng, target=12)
+    x_step = _nice_step(xrng, target=12)
+
+    # horizontal lines
+    y0 = math.floor(y_min / y_step) * y_step
+    y1 = math.ceil(y_max / y_step) * y_step
+    yv = y0
+    while yv <= y1 + 1e-9:
+        grid_lines.append(dict(
+            type="line", x0=xmin, x1=xmax, y0=yv, y1=yv,
+            line=dict(color="#eaeaea", width=1),
+            layer="below", xref="x", yref="y"
+        ))
+        yv += y_step
+
+    # vertical lines
+    x0 = math.floor(xmin / x_step) * x_step
+    x1 = math.ceil(xmax / x_step) * x_step
+    xv = x0
+    while xv <= x1 + 1e-9:
+        grid_lines.append(dict(
+            type="line", x0=xv, x1=xv, y0=y_min, y1=y_max,
+            line=dict(color="#f0f0f0", width=1),
+            layer="below", xref="x", yref="y"
+        ))
+        xv += x_step
 
     # Collect water elevations per BH (one marker per BH)
     water_x, water_y = [], []
 
+    # --- Soil rectangles and labels ---
     for bh in ordered_bhs:
         bore = df[df['Borehole'] == bh]
         if bore.empty:
@@ -255,13 +317,12 @@ def build_plotly_profile(
             spt  = str(r['SPT_Label'])
             color = SOIL_COLOR_MAP.get(soil, "#cccccc")
             used_types.add(soil)
-            # IMPORTANT: layer="below" so markers render on top; grid is moved behind via axis.layer
-            shapes.append(dict(
+            soil_rects.append(dict(
                 type="rect",
                 x0=x-half, x1=x+half, y0=et, y1=ef,
                 line=dict(color="#000", width=1.3),
                 fillcolor=color,
-                layer="below"
+                layer="below",   # above the grid (because added after grid_lines)
             ))
 
             # Inner labels controlled by toggles
@@ -289,34 +350,30 @@ def build_plotly_profile(
                                  marker=dict(size=12, color=SOIL_COLOR_MAP.get(soil, "#cccccc")),
                                  name=soil, showlegend=True))
 
-    # Blue triangle markers for water elevation (drawn last so they're on top)
+    # Water marker trace (drawn last → on top)
     if water_x:
-        fig.add_trace(
-            go.Scatter(
-                x=water_x, y=water_y, mode="markers",
-                marker=dict(symbol="triangle-down", size=14, color="#1e88e5"),
-                name="Water Table",
-                hovertemplate="Water Elev: %{y:.2f} ft<extra></extra>"
-            )
-        )
+        fig.add_trace(go.Scatter(
+            x=water_x, y=water_y, mode="markers",
+            marker=dict(symbol="triangle-down", size=14, color="#1e88e5"),
+            name="Water Table",
+            hovertemplate="Water Elev: %{y:.2f} ft<extra></extra>"
+        ))
 
-    xs = list(x_positions.values())
-    xmin = (min(xs)-half) if xs else -half
-    xmax = (max(xs)+3*half) if xs else half
-
+    # Apply layout with shapes: grid first, then soil rectangles
     fig.update_layout(
         title=title,
         font=dict(family="Inter, Arial, sans-serif"),
         xaxis_title="Chainage along section (ft)", yaxis_title="Elevation (ft)",
-        shapes=shapes, annotations=annotations, height=fig_height_px,
+        shapes=grid_lines + soil_rects,              # order controls z-order under traces
+        annotations=annotations, height=fig_height_px,
         margin=dict(l=70, r=260, t=70, b=70), plot_bgcolor="white",
         legend=dict(yanchor="top", y=1, xanchor="left", x=1.02, bordercolor="#ddd", borderwidth=1),
     )
-    # Put the grid BEHIND traces and shapes
-    fig.update_xaxes(range=[xmin, xmax], showgrid=True, gridcolor="#eaeaea",
-                     zeroline=False, layer="below traces")
-    fig.update_yaxes(range=[y_min, y_max], showgrid=True, gridcolor="#eaeaea",
-                     zeroline=False, layer="below traces", scaleanchor=None)
+
+    # Turn OFF axis grids so they don't draw over shapes
+    fig.update_xaxes(range=[xmin, xmax], showgrid=False, zeroline=False)
+    fig.update_yaxes(range=[y_min, y_max], showgrid=False, zeroline=False, scaleanchor=None)
+
     return fig
 
 # ── 3D profile (PLAN COORDS) builder ────────────────────────────────────────
