@@ -255,8 +255,13 @@ def build_plotly_profile(
             spt  = str(r['SPT_Label'])
             color = SOIL_COLOR_MAP.get(soil, "#cccccc")
             used_types.add(soil)
-            shapes.append(dict(type="rect", x0=x-half, x1=x+half, y0=et, y1=ef,
-                               line=dict(color="#000", width=1.3), fillcolor=color))
+            shapes.append(dict(
+                type="rect",
+                x0=x-half, x1=x+half, y0=et, y1=ef,
+                line=dict(color="#000", width=1.3),
+                fillcolor=color,
+                layer="below"             
+            ))
 
             # Inner labels controlled by toggles
             if show_codes or show_spt:
