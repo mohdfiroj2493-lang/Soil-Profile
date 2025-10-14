@@ -81,7 +81,7 @@ def compute_spt_avg(value):
 @st.cache_data(show_spinner=False)
 def load_df_from_excel(uploaded_file) -> pd.DataFrame:
     df = pd.read_excel(uploaded_file)
-    # Normalize headers (this removes trailing space from "Elevation Water Table ")
+    # Normalize headers (removes trailing space from "Elevation Water Table ")
     df.columns = df.columns.str.strip()
     df.rename(columns=RENAME_MAP, inplace=True)
 
@@ -255,12 +255,13 @@ def build_plotly_profile(
             spt  = str(r['SPT_Label'])
             color = SOIL_COLOR_MAP.get(soil, "#cccccc")
             used_types.add(soil)
+            # IMPORTANT: layer="below" so markers render on top; grid is moved behind via axis.layer
             shapes.append(dict(
                 type="rect",
                 x0=x-half, x1=x+half, y0=et, y1=ef,
                 line=dict(color="#000", width=1.3),
                 fillcolor=color,
-                layer="below"             
+                layer="below"
             ))
 
             # Inner labels controlled by toggles
@@ -288,13 +289,14 @@ def build_plotly_profile(
                                  marker=dict(size=12, color=SOIL_COLOR_MAP.get(soil, "#cccccc")),
                                  name=soil, showlegend=True))
 
-    # Blue triangle markers for water elevation
+    # Blue triangle markers for water elevation (drawn last so they're on top)
     if water_x:
         fig.add_trace(
             go.Scatter(
                 x=water_x, y=water_y, mode="markers",
                 marker=dict(symbol="triangle-down", size=14, color="#1e88e5"),
-                name="Water Table", hovertemplate="Water Elev: %{y:.2f} ft<extra></extra>"
+                name="Water Table",
+                hovertemplate="Water Elev: %{y:.2f} ft<extra></extra>"
             )
         )
 
@@ -310,8 +312,11 @@ def build_plotly_profile(
         margin=dict(l=70, r=260, t=70, b=70), plot_bgcolor="white",
         legend=dict(yanchor="top", y=1, xanchor="left", x=1.02, bordercolor="#ddd", borderwidth=1),
     )
-    fig.update_xaxes(range=[xmin, xmax], showgrid=True, gridcolor="#eaeaea", zeroline=False)
-    fig.update_yaxes(range=[y_min, y_max], showgrid=True, gridcolor="#eaeaea", zeroline=False, scaleanchor=None)
+    # Put the grid BEHIND traces and shapes
+    fig.update_xaxes(range=[xmin, xmax], showgrid=True, gridcolor="#eaeaea",
+                     zeroline=False, layer="below traces")
+    fig.update_yaxes(range=[y_min, y_max], showgrid=True, gridcolor="#eaeaea",
+                     zeroline=False, layer="below traces", scaleanchor=None)
     return fig
 
 # ── 3D profile (PLAN COORDS) builder ────────────────────────────────────────
