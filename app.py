@@ -55,7 +55,9 @@ ORDERED_SOIL_TYPES = [
     "CL", "CL-ML", "CL-CH", "CH",
     "ML", "MH", "ML-CL", 
     "GM", "GP-GM", "GP-GC", "GP", "GC", "GW",
-    "Rock", "PWR", "RF",
+    "Rock", "PWR", "RF","BASALT CONGLOMERATE","BASALT","BRECCIA","CHERT",
+    "CLAYSTONE","DIATOMITE","DOLOMITE", "LIMESTONE","MUDSTONE","SANDSTONE","SHALE",
+    "SILTSTONE",
 ]
 
 # Column mapping + SPT label
