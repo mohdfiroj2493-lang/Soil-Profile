@@ -37,7 +37,7 @@ SOIL_COLOR_MAP = {
     "Topsoil": "#ffffcb", "Water": "#00ffff",
     # Clays/Silts
     "CL": "#c5cae9","CH": "#64b5f6","CL-CH": "#fff176","CL-ML": "#ef9a9a",
-    "ML": "#ef5350","MH": "#ffb74d",
+    "ML": "#ef5350","MH": "#ffb74d","ML-CL": "#dbb40c",
     # Gravels/Sands
     "GM": "#aed581","GW": "#c8e6c9","GC": "#00ff00","GP": "#aaff32","GP-GC": "#008000","GP-GM": "#15b01a",
     "SM": "#76d7c4","SP": "#ce93d8","SC": "#81c784","SW": "#ba68c8",
@@ -51,7 +51,7 @@ ORDERED_SOIL_TYPES = [
     "SM", "SM-ML", "SM-SC", "SP", "SW",
     "SC", "SC-CL", "SC-SM",
     "CL", "CL-ML", "CL-CH", "CH",
-    "ML", "MH",
+    "ML", "MH", "ML-CL", 
     "GM", "GP-GM", "GP-GC", "GP", "GC", "GW",
     "Rock", "PWR", "RF",
 ]
