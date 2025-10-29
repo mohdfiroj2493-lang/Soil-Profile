@@ -41,7 +41,7 @@ SOIL_COLOR_MAP = {
     # Gravels/Sands
     "GM": "#aed581","GW": "#c8e6c9","GC": "#00ff00","GP": "#aaff32","GP-GC": "#008000","GP-GM": "#15b01a",
     "SM": "#76d7c4","SP": "#ce93d8","SC": "#81c784","SW": "#ba68c8",
-    "SM-SC": "#e1bee7","SM-ML": "#dcedc8","SC-CL": "#ffee58","SC-SM": "#fff59d",
+    "SM-SC": "#e1bee7","SM-ML": "#dcedc8","SC-CL": "#ffee58","SC-SM": "#fff59d","SP-SM": "#c1f80a","SP-SC": "#7fff00","SW-SM": "#90ee90",
     # Rock / Fill / Weathered
     "PWR": "#808080","RF": "#929591","Rock": "#c0c0c0", "BASALT CONGLOMERATE": "#ffff14","BASALT": "#bbf90f","BRECCIA": "#f5deb3","CHERT": "#a0522d",
     "CLAYSTONE": "#40e0d0","DIATOMITE": "#7bc8f6","DOLOMITE": "#000080", "LIMESTONE": "#006400","MUDSTONE": "#add8e6","SANDSTONE": "#c79fef","SHALE": "#13eac9",
@@ -50,13 +50,13 @@ SOIL_COLOR_MAP = {
 # Preferred legend order; anything else will be appended automatically
 ORDERED_SOIL_TYPES = [
     "Topsoil", "Water",
-    "SM", "SM-ML", "SM-SC", "SP", "SW",
-    "SC", "SC-CL", "SC-SM",
+    "SM", "SM-ML", "SM-SC", "SP-SM", "SP-SC" "SP", "SW",
+    "SC", "SC-CL", "SC-SM", "SP-SC","SW-SM",
     "CL", "CL-ML", "CL-CH", "CH",
     "ML", "MH", "ML-CL", 
     "GM", "GP-GM", "GP-GC", "GP", "GC", "GW",
-    "Rock", "PWR", "RF","BASALT CONGLOMERATE","BASALT","BRECCIA","CHERT",
-    "CLAYSTONE","DIATOMITE","DOLOMITE", "LIMESTONE","MUDSTONE","SANDSTONE","SHALE",
+    "Rock", "PWR", "RF", "BASALT CONGLOMERATE", "BASALT", "BRECCIA", "CHERT",
+    "CLAYSTONE", "DIATOMITE", "DOLOMITE", "LIMESTONE", "MUDSTONE", "SANDSTONE", "SHALE",
     "SILTSTONE",
 ]
 
