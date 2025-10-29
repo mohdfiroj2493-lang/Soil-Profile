@@ -43,7 +43,9 @@ SOIL_COLOR_MAP = {
     "SM": "#76d7c4","SP": "#ce93d8","SC": "#81c784","SW": "#ba68c8",
     "SM-SC": "#e1bee7","SM-ML": "#dcedc8","SC-CL": "#ffee58","SC-SM": "#fff59d",
     # Rock / Fill / Weathered
-    "PWR": "#808080","RF": "#929591","Rock": "#c0c0c0",
+    "PWR": "#808080","RF": "#929591","Rock": "#c0c0c0", "BASALT CONGLOMERATE": "#ffff14","BASALT": "#bbf90f","BRECCIA": "#f5deb3","CHERT": "#a0522d",
+    "CLAYSTONE": "#40e0d0","DIATOMITE": "#7bc8f6","DOLOMITE": "#000080", "LIMESTONE": "#006400","MUDSTONE": "#add8e6","SANDSTONE": "#c79fef","SHALE": "#13eac9",
+    "SILTSTONE": "#ffd700",
 }
 # Preferred legend order; anything else will be appended automatically
 ORDERED_SOIL_TYPES = [
