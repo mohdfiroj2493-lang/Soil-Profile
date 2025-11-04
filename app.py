@@ -566,7 +566,8 @@ if proposed_dict:
         color = dfp["Color"].iloc[0]
         for _, r in dfp.iterrows():
             nm = str(r.get("Name", "")).strip() or "Proposed"
-            add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm_label, color)
+            # Do NOT add sheet name before borehole name
+            add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm, color)
 
 Draw(
     draw_options={"polyline":{"shapeOptions":{"color":"#3388ff","weight":4}},
