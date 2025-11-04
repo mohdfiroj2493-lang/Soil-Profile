@@ -4,6 +4,10 @@
 #  • Separate toggles to show/hide Soil Code (ML/SM/etc.) and SPT N-value text
 #  • No large overlay codes; keep interior labels only per toggles
 #  • High-quality figure export; manual column width option retained
+#
+# Enhancement:
+#  • Optional Proposed.xlsx can have up to 8 sheets; show them on the map with different colors per sheet
+#    and label points as "<SheetName>-<PointName>"
 
 from typing import Dict, List, Tuple, Optional
 import io
@@ -22,7 +26,13 @@ import plotly.graph_objects as go
 
 # ── Visual config ────────────────────────────────────────────────────────────
 EXISTING_TEXT_COLOR = "#1e88e5"   # blue
-PROPOSED_TEXT_COLOR = "#e53935"   # red
+
+# Colors used for up to 8 sheets in Proposed.xlsx (distinct per sheet)
+PROPOSED_TEXT_COLORS = [
+    "#e53935", "#8e24aa", "#3949ab", "#00897b", "#fdd835",
+    "#6d4c41", "#43a047", "#fb8c00"
+]
+
 CIRCLE_RADIUS_PX    = 10
 CIRCLE_STROKE       = "#ffffff"
 CIRCLE_STROKE_W     = 1
@@ -50,7 +60,7 @@ SOIL_COLOR_MAP = {
 # Preferred legend order; anything else will be appended automatically
 ORDERED_SOIL_TYPES = [
     "Topsoil", "Water",
-    "SM", "SM-ML", "SM-SC", "SP-SM", "SP-SC" "SP", "SW",
+    "SM", "SM-ML", "SM-SC", "SP-SM", "SP-SC", "SP", "SW",
     "SC", "SC-CL", "SC-SM", "SP-SC","SW-SM",
     "CL", "CL-ML", "CL-CH", "CH",
     "ML", "MH", "ML-CL", 
@@ -113,7 +123,7 @@ def load_df_from_excel(uploaded_file) -> pd.DataFrame:
 def make_borehole_coords(df: pd.DataFrame) -> pd.DataFrame:
     return df.groupby('Borehole')[['Latitude','Longitude']].first().reset_index()
 
-# Proposed points helpers
+# Proposed points helpers (normalize columns)
 def normalize_cols_general(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
@@ -137,13 +147,24 @@ def normalize_cols_general(df: pd.DataFrame) -> pd.DataFrame:
 def load_first_sheet_bytes(bdata: bytes) -> pd.DataFrame:
     return pd.read_excel(io.BytesIO(bdata))
 
+# NEW: Multi-sheet Proposed.xlsx loader (up to 8 sheets, each with a unique color)
 @st.cache_data(show_spinner=False)
-def load_proposed_df(uploaded_bytes: bytes) -> pd.DataFrame:
-    try:
-        df = load_first_sheet_bytes(uploaded_bytes)
-        return normalize_cols_general(df)
-    except Exception:
-        return pd.DataFrame(columns=["Latitude","Longitude","Name"])
+def load_proposed_multisheet(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
+    """
+    Reads Proposed.xlsx with up to 8 sheets.
+    Returns a dict of {sheet_name: DataFrame[Latitude, Longitude, Name, Sheet, Color]}.
+    """
+    all_sheets = pd.read_excel(io.BytesIO(uploaded_bytes), sheet_name=None)
+    result: Dict[str, pd.DataFrame] = {}
+    for i, (sheet, df) in enumerate(all_sheets.items()):
+        if i >= 8:
+            break
+        df_norm = normalize_cols_general(df)
+        if not df_norm.empty:
+            df_norm["Sheet"] = sheet
+            df_norm["Color"] = PROPOSED_TEXT_COLORS[i % len(PROPOSED_TEXT_COLORS)]
+            result[sheet] = df_norm
+    return result
 
 # ── geometry helpers ─────────────────────────────────────────────────────────
 def total_geodesic_length_ft_of_linestring(line: LineString) -> float:
@@ -490,7 +511,7 @@ st.set_page_config(page_title="Borehole Section Profile", layout="wide")
 # Sidebar uploads
 st.sidebar.header("Upload")
 main_file = st.sidebar.file_uploader("MAIN borehole Excel (Elevations/Soils/SPT)", type=["xlsx","xls"])
-prop_file = st.sidebar.file_uploader("Optional PROPOSED.xlsx (lat/lon/name)", type=["xlsx","xls"])
+prop_file = st.sidebar.file_uploader("Optional PROPOSED.xlsx (multi-sheet, lat/lon/name)", type=["xlsx","xls"])
 
 if main_file is None:
     st.title("Map with Bore Logs")
@@ -500,21 +521,31 @@ if main_file is None:
 # Load data
 df = load_df_from_excel(main_file)
 bh_coords = make_borehole_coords(df)
-proposed_df = pd.DataFrame(columns=["Latitude","Longitude","Name"])
+
+# Load optional Proposed.xlsx (multi-sheet, up to 8)
+proposed_dict: Dict[str, pd.DataFrame] = {}
 if prop_file is not None:
-    proposed_df = load_proposed_df(prop_file.getvalue())
+    try:
+        proposed_dict = load_proposed_multisheet(prop_file.getvalue())
+    except Exception as e:
+        st.warning(f"Could not read Proposed workbook: {e}")
+        proposed_dict = {}
 
 # ── 1) Map with Bore Logs ───────────────────────────────────────────────────
 st.title("Map with Bore Logs")
 
-center_lat = float(pd.concat(
-    [bh_coords[['Latitude']], proposed_df[['Latitude']] if not proposed_df.empty else bh_coords[['Latitude']]],
-    ignore_index=True)['Latitude'].mean()
-)
-center_lon = float(pd.concat(
-    [bh_coords[['Longitude']], proposed_df[['Longitude']] if not proposed_df.empty else bh_coords[['Longitude']]],
-    ignore_index=True)['Longitude'].mean()
-)
+# Map center: include proposed points (all sheets) if available
+if proposed_dict:
+    # Combine all proposed into one DF for centering
+    proposed_all = pd.concat(
+        [dfp[['Latitude','Longitude']] for dfp in proposed_dict.values() if not dfp.empty],
+        ignore_index=True
+    )
+    center_lat = float(pd.concat([bh_coords[['Latitude']], proposed_all[['Latitude']]], ignore_index=True)['Latitude'].mean())
+    center_lon = float(pd.concat([bh_coords[['Longitude']], proposed_all[['Longitude']]], ignore_index=True)['Longitude'].mean())
+else:
+    center_lat = float(bh_coords['Latitude'].mean())
+    center_lon = float(bh_coords['Longitude'].mean())
 
 fmap = Map(location=(center_lat, center_lon), zoom_start=13, control_scale=True)
 folium.raster_layers.TileLayer(
@@ -523,12 +554,20 @@ folium.raster_layers.TileLayer(
 ).add_to(fmap)
 LayerControl(position='topright').add_to(fmap)
 
+# Add existing boreholes
 for _, r in bh_coords.iterrows():
     add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), str(r['Borehole']), EXISTING_TEXT_COLOR)
-if not proposed_df.empty:
-    for _, r in proposed_df.iterrows():
-        nm = str(r.get("Name", "")).strip() or "Proposed"
-        add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm, PROPOSED_TEXT_COLOR)
+
+# Add proposed points from multiple sheets (each sheet has its color)
+if proposed_dict:
+    for sheet, dfp in proposed_dict.items():
+        if dfp.empty: 
+            continue
+        color = dfp["Color"].iloc[0]
+        for _, r in dfp.iterrows():
+            nm = str(r.get("Name", "")).strip() or "Proposed"
+            nm_label = f"{sheet}-{nm}"  # prefix with sheet
+            add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm_label, color)
 
 Draw(
     draw_options={"polyline":{"shapeOptions":{"color":"#3388ff","weight":4}},
@@ -579,7 +618,7 @@ if not st.session_state["section_line_coords"]:
 
 section_line = LineString(st.session_state["section_line_coords"])
 
-# Select boreholes within corridor
+# Select EXISTING boreholes within corridor (as per your original logic)
 rows = []
 for _, r in bh_coords.iterrows():
     ch, off = chainage_and_offset_ft(section_line, float(r['Latitude']), float(r['Longitude']))
