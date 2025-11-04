@@ -566,7 +566,6 @@ if proposed_dict:
         color = dfp["Color"].iloc[0]
         for _, r in dfp.iterrows():
             nm = str(r.get("Name", "")).strip() or "Proposed"
-            nm_label = f"{sheet}-{nm}"  # prefix with sheet
             add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm_label, color)
 
 Draw(
