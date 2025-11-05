@@ -83,21 +83,48 @@ def compute_spt_avg(value):
 
 @st.cache_data(show_spinner=False)
 def load_multisheet_existing(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
-    """Load multi-sheet EXISTING borehole Excel."""
+    """
+    Load multi-sheet EXISTING borehole Excel.
+    Each sheet may represent a different dataset — up to 8 sheets supported.
+    Returns a dict {sheet_name: DataFrame}.
+    """
     all_sheets = pd.read_excel(io.BytesIO(uploaded_bytes), sheet_name=None)
-    result = {}
+    result: Dict[str, pd.DataFrame] = {}
+
     for i, (sheet, df) in enumerate(all_sheets.items()):
+        # Skip empty sheets
+        if df.empty:
+            continue
+
+        # Clean headers and rename to unified names
         df.columns = df.columns.str.strip()
         df.rename(columns=RENAME_MAP, inplace=True, errors="ignore")
+
+        # Ensure Latitude/Longitude columns exist and are numeric
         if not {"Latitude", "Longitude"}.issubset(df.columns):
             continue
-        df['Latitude'] = pd.to_numeric(df['Latitude'], errors='coerce')
-        df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
-        df = df.dropna(subset=['Latitude','Longitude']).copy()
-        df['SPT_Label'] = df.get('SPT', pd.NA).apply(compute_spt_avg)
-        df['Sheet'] = sheet
-        df['Color'] = EXISTING_TEXT_COLORS[i % len(EXISTING_TEXT_COLORS)]
+        df["Latitude"] = pd.to_numeric(df["Latitude"], errors="coerce")
+        df["Longitude"] = pd.to_numeric(df["Longitude"], errors="coerce")
+        df = df.dropna(subset=["Latitude", "Longitude"]).copy()
+
+        # Compute average SPT labels (N-values)
+        df["SPT_Label"] = df.get("SPT", pd.NA).apply(compute_spt_avg)
+
+        # 🟡 Normalize soil names: extract codes in parentheses or detect Topsoil
+        if "Soil_Type" in df.columns:
+            df["Soil_Type"] = df["Soil_Type"].astype(str)
+            df["Soil_Type"] = df["Soil_Type"].str.extract(r"\((.*?)\)").fillna(
+                df["Soil_Type"].str.replace(
+                    r"^.*top\s*soil.*$", "Topsoil", case=False, regex=True
+                )
+            )
+
+        # Assign metadata
+        df["Sheet"] = sheet
+        df["Color"] = EXISTING_TEXT_COLORS[i % len(EXISTING_TEXT_COLORS)]
+
         result[sheet] = df
+
     return result
 
 @st.cache_data(show_spinner=False)
