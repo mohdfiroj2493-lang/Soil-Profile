@@ -570,7 +570,7 @@ if proposed_dict:
             add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm, color)
 
 Draw(
-    draw_options={"polyline":{"shapeOptions":{"color":"#3388ff","weight":4}},
+    draw_options={"polyline":{"shapeOptions":{"color":"#e50000","weight":5}},
                   "polygon":False,"circle":False,"rectangle":False,"marker":False,"circlemarker":False},
     edit_options={"edit":True,"remove":True}
 ).add_to(fmap)
