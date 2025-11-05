@@ -560,25 +560,14 @@ for _, r in bh_coords.iterrows():
 
 # Add proposed points from multiple sheets (each sheet has its color)
 if proposed_dict:
-    st.sidebar.markdown("### Proposed Boreholes Visibility")
-    sheet_visibility: Dict[str, bool] = {}
-    for sheet in proposed_dict.keys():
-        sheet_visibility[sheet] = st.sidebar.checkbox(
-            f"Show {sheet}", value=True, key=f"vis_{sheet}"
-        )
-
     for sheet, dfp in proposed_dict.items():
-        if not sheet_visibility.get(sheet, True) or dfp.empty:
+        if dfp.empty: 
             continue
         color = dfp["Color"].iloc[0]
         for _, r in dfp.iterrows():
             nm = str(r.get("Name", "")).strip() or "Proposed"
-            add_labeled_point(
-                fmap, float(r["Latitude"]), float(r["Longitude"]), nm, color
-            )
-# Add existing boreholes
-for _, r in bh_coords.iterrows():
-    add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), str(r['Borehole']), EXISTING_TEXT_COLOR)
+            # Do NOT add sheet name before borehole name
+            add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm, color)
 
 Draw(
     draw_options={"polyline":{"shapeOptions":{"color":"#3388ff","weight":4}},
