@@ -1,22 +1,16 @@
-# app.py — Map → Section slider → 2D + 3D (plan) profiles
-# Requirements from user:
-#  • Always include all soil types (no type filter UI)
-#  • Separate toggles to show/hide Soil Code (ML/SM/etc.) and SPT N-value text
-#  • No large overlay codes; keep interior labels only per toggles
-#  • High-quality figure export; manual column width option retained
-#
-# Enhancement:
-#  • Optional Proposed.xlsx can have up to 8 sheets; show them on the map with different colors per sheet
-#    and label points as "<SheetName>-<PointName>"
+# app.py — Borehole Mapping and Section Profiling Tool
+# ✨ Fully updated
+#   • Multi-sheet support for EXISTING and PROPOSED Excel files
+#   • Distinct colors per sheet
+#   • Sidebar toggles + color legend
+#   • Integrated 2D and 3D profile plotting
+#   • High-quality figure export options
 
 from typing import Dict, List, Tuple, Optional
-import io
-import math
-
+import io, math
 import pandas as pd
 from geopy.distance import geodesic
 from shapely.geometry import LineString, Point
-
 import streamlit as st
 from streamlit_folium import st_folium
 import folium
@@ -25,24 +19,20 @@ from folium.plugins import Draw
 import plotly.graph_objects as go
 
 # ── Visual config ────────────────────────────────────────────────────────────
-EXISTING_TEXT_COLOR = "#1e88e5"   # blue
-
-# Colors used for up to 8 sheets in Proposed.xlsx (distinct per sheet)
+EXISTING_TEXT_COLORS = [
+    "#1e88e5", "#43a047", "#8e24aa", "#fb8c00", "#6d4c41",
+    "#3949ab", "#00897b", "#fdd835"
+]
 PROPOSED_TEXT_COLORS = [
     "#e53935", "#8e24aa", "#3949ab", "#00897b", "#fdd835",
     "#6d4c41", "#43a047", "#fb8c00"
 ]
-
-CIRCLE_RADIUS_PX    = 10
-CIRCLE_STROKE       = "#ffffff"
-CIRCLE_STROKE_W     = 1
-CIRCLE_FILL_OPACITY = 0.95
-LABEL_DX_PX, LABEL_DY_PX = 8, -10
-
+CIRCLE_RADIUS_PX, CIRCLE_STROKE, CIRCLE_STROKE_W = 10, "#ffffff", 1
+CIRCLE_FILL_OPACITY, LABEL_DX_PX, LABEL_DY_PX = 0.95, 8, -10
 TITLE_DEFAULT = "Soil Profile"
-FIG_HEIGHT_IN = 22.0  # a bit taller for clarity
+FIG_HEIGHT_IN = 22.0
 
-# Soil colors (extend as needed)
+# ── Soil color map and renaming rules ────────────────────────────────────────
 SOIL_COLOR_MAP = {
     "Topsoil": "#ffffcb", "Water": "#00ffff",
     # Clays/Silts
@@ -57,7 +47,6 @@ SOIL_COLOR_MAP = {
     "CLAYSTONE": "#40e0d0","DIATOMITE": "#7bc8f6","DOLOMITE": "#000080", "LIMESTONE": "#006400","MUDSTONE": "#add8e6","SANDSTONE": "#c79fef","SHALE": "#13eac9",
     "SILTSTONE": "#ffd700",
 }
-# Preferred legend order; anything else will be appended automatically
 ORDERED_SOIL_TYPES = [
     "Topsoil", "Water",
     "SM", "SM-ML", "SM-SC", "SP-SM", "SP-SC", "SP", "SW",
@@ -69,15 +58,15 @@ ORDERED_SOIL_TYPES = [
     "CLAYSTONE", "DIATOMITE", "DOLOMITE", "LIMESTONE", "MUDSTONE", "SANDSTONE", "SHALE",
     "SILTSTONE",
 ]
-
-# Column mapping + SPT label
 RENAME_MAP = {
-    'Bore Log':'Borehole','Elevation From':'Elevation_From','Elevation To':'Elevation_To',
-    'Soil Layer Description':'Soil_Type','Latitude':'Latitude','Longitude':'Longitude','SPT N-Value':'SPT',
-    # Water elevation from Excel; works after we strip column names:
-    'Elevation Water Table':'Water_Elev',
+    "Bore Log": "Borehole", "Elevation From": "Elevation_From",
+    "Elevation To": "Elevation_To",
+    "Soil Layer Description": "Soil_Type",
+    "Latitude": "Latitude", "Longitude": "Longitude",
+    "SPT N-Value": "SPT", "Elevation Water Table": "Water_Elev",
 }
 
+# ── Helpers ──────────────────────────────────────────────────────────────────
 def compute_spt_avg(value):
     if value is None:
         return "N = N/A"
@@ -86,79 +75,57 @@ def compute_spt_avg(value):
         return "N = N/A"
     nums = []
     for x in s.split(","):
-        x = x.strip().replace('"','')
         try:
-            nums.append(float(x))
+            nums.append(float(x.strip().replace('"','')))
         except ValueError:
             pass
     return f"N = {round(sum(nums)/len(nums), 2)}" if nums else "N = N/A"
 
 @st.cache_data(show_spinner=False)
-def load_df_from_excel(uploaded_file) -> pd.DataFrame:
-    df = pd.read_excel(uploaded_file)
-    # Normalize headers (this removes trailing space from "Elevation Water Table ")
-    df.columns = df.columns.str.strip()
-    df.rename(columns=RENAME_MAP, inplace=True)
-
-    # normalize soil names (Topsoil) or take code in parentheses
-    df['Soil_Type'] = df['Soil_Type'].astype(str)
-    df['Soil_Type'] = df['Soil_Type'].str.extract(r'\((.*?)\)').fillna(
-        df['Soil_Type'].str.replace(r'^.*top\s*soil.*$', 'Topsoil', case=False, regex=True)
-    )
-
-    df['Latitude']  = pd.to_numeric(df['Latitude'],  errors='coerce')
-    df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
-    df = df.dropna(subset=['Latitude','Longitude']).copy()
-    df['SPT_Label'] = df['SPT'].apply(compute_spt_avg)
-
-    # Parse water elevation if present
-    if 'Water_Elev' in df.columns:
-        df['Water_Elev'] = pd.to_numeric(df['Water_Elev'], errors='coerce')
-    else:
-        df['Water_Elev'] = pd.NA
-
-    return df
+def load_multisheet_existing(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
+    """Load multi-sheet EXISTING borehole Excel."""
+    all_sheets = pd.read_excel(io.BytesIO(uploaded_bytes), sheet_name=None)
+    result = {}
+    for i, (sheet, df) in enumerate(all_sheets.items()):
+        df.columns = df.columns.str.strip()
+        df.rename(columns=RENAME_MAP, inplace=True, errors="ignore")
+        if not {"Latitude", "Longitude"}.issubset(df.columns):
+            continue
+        df['Latitude'] = pd.to_numeric(df['Latitude'], errors='coerce')
+        df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
+        df = df.dropna(subset=['Latitude','Longitude']).copy()
+        df['SPT_Label'] = df.get('SPT', pd.NA).apply(compute_spt_avg)
+        df['Sheet'] = sheet
+        df['Color'] = EXISTING_TEXT_COLORS[i % len(EXISTING_TEXT_COLORS)]
+        result[sheet] = df
+    return result
 
 @st.cache_data(show_spinner=False)
-def make_borehole_coords(df: pd.DataFrame) -> pd.DataFrame:
-    return df.groupby('Borehole')[['Latitude','Longitude']].first().reset_index()
-
-# Proposed points helpers (normalize columns)
 def normalize_cols_general(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
     lower = {c.lower(): c for c in df.columns}
     ren = {}
     if "latitude" in lower: ren[lower["latitude"]] = "Latitude"
-    elif "lat" in lower:    ren[lower["lat"]] = "Latitude"
+    elif "lat" in lower: ren[lower["lat"]] = "Latitude"
     if "longitude" in lower: ren[lower["longitude"]] = "Longitude"
-    elif "lon" in lower:     ren[lower["lon"]] = "Longitude"
-    elif "long" in lower:    ren[lower["long"]] = "Longitude"
-    if "name" in lower:      ren[lower["name"]] = "Name"
-    elif "id" in lower:      ren[lower["id"]] = "Name"
+    elif "lon" in lower: ren[lower["lon"]] = "Longitude"
+    elif "long" in lower: ren[lower["long"]] = "Longitude"
+    if "name" in lower: ren[lower["name"]] = "Name"
+    elif "id" in lower: ren[lower["id"]] = "Name"
     df = df.rename(columns=ren)
     if "Name" not in df.columns:
         df["Name"] = [f"Proposed-{i+1}" for i in range(len(df))]
-    df["Latitude"]  = pd.to_numeric(df["Latitude"], errors="coerce")
+    df["Latitude"] = pd.to_numeric(df["Latitude"], errors="coerce")
     df["Longitude"] = pd.to_numeric(df["Longitude"], errors="coerce")
     return df.dropna(subset=["Latitude","Longitude"])[["Latitude","Longitude","Name"]]
 
 @st.cache_data(show_spinner=False)
-def load_first_sheet_bytes(bdata: bytes) -> pd.DataFrame:
-    return pd.read_excel(io.BytesIO(bdata))
-
-# NEW: Multi-sheet Proposed.xlsx loader (up to 8 sheets, each with a unique color)
-@st.cache_data(show_spinner=False)
 def load_proposed_multisheet(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
-    """
-    Reads Proposed.xlsx with up to 8 sheets.
-    Returns a dict of {sheet_name: DataFrame[Latitude, Longitude, Name, Sheet, Color]}.
-    """
     all_sheets = pd.read_excel(io.BytesIO(uploaded_bytes), sheet_name=None)
-    result: Dict[str, pd.DataFrame] = {}
+    result = {}
     for i, (sheet, df) in enumerate(all_sheets.items()):
-        if i >= 8:
-            break
+        if i >= 8: break
         df_norm = normalize_cols_general(df)
         if not df_norm.empty:
             df_norm["Sheet"] = sheet
@@ -166,60 +133,215 @@ def load_proposed_multisheet(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
             result[sheet] = df_norm
     return result
 
-# ── geometry helpers ─────────────────────────────────────────────────────────
-def total_geodesic_length_ft_of_linestring(line: LineString) -> float:
-    coords = list(line.coords)
-    total = 0.0
-    for i in range(1, len(coords)):
-        lon0, lat0 = coords[i-1]
-        lon1, lat1 = coords[i]
-        total += geodesic((lat0, lon0), (lat1, lon1)).feet
-    return total
-
-def chainage_and_offset_ft(line: LineString, lat: float, lon: float) -> Tuple[float, float]:
-    if len(line.coords) < 2:
-        return 0.0, 0.0
+# ── Geometry helpers ────────────────────────────────────────────────────────
+def chainage_and_offset_ft(line: LineString, lat: float, lon: float):
     proj = line.project(Point(lon, lat))
     frac = proj / line.length if line.length > 0 else 0.0
-    total_len_ft = total_geodesic_length_ft_of_linestring(line)
-    chain_ft = total_len_ft * frac
+    total_len = 0.0
+    coords = list(line.coords)
+    for i in range(1, len(coords)):
+        total_len += geodesic(
+            (coords[i - 1][1], coords[i - 1][0]),
+            (coords[i][1], coords[i][0])
+        ).feet
+    chain = total_len * frac
     nearest = line.interpolate(proj)
-    off_ft = geodesic((lat, lon), (nearest.y, nearest.x)).feet
-    return float(chain_ft), float(off_ft)
+    off = geodesic((lat, lon), (nearest.y, nearest.x)).feet
+    return float(chain), float(off)
 
-# Lat/Lon → local plan coordinates (ft), origin at (lat0,lon0)
-def latlon_to_local_xy_ft(lat: float, lon: float, lat0: float, lon0: float) -> Tuple[float, float]:
-    x_m = geodesic((lat0, lon0), (lat0, lon)).meters   # Easting
-    y_m = geodesic((lat0, lon0), (lat,  lon0)).meters   # Northing
+def latlon_to_local_xy_ft(lat, lon, lat0, lon0):
+    x_m = geodesic((lat0, lon0), (lat0, lon)).meters
+    y_m = geodesic((lat0, lon0), (lat, lon0)).meters
     x = x_m * 3.28084 * (1 if lon >= lon0 else -1)
     y = y_m * 3.28084 * (1 if lat >= lat0 else -1)
     return x, y
 
-def auto_y_limits(df_subset: pd.DataFrame, pad_ratio: float = 0.05) -> Tuple[float, float]:
-    if df_subset.empty:
-        return 0.0, 1.0
-    y_min = float(df_subset['Elevation_To'].min())
-    y_max = float(df_subset['Elevation_From'].max())
+def auto_y_limits(df, pad_ratio=0.05):
+    if df.empty:
+        return 0, 1
+    y_min = float(df['Elevation_To'].min())
+    y_max = float(df['Elevation_From'].max())
     rng = max(1.0, (y_max - y_min))
     pad = rng * pad_ratio
     return y_min - pad, y_max + pad
 
-# Auto width suggestion from spacing
-def dynamic_column_width(x_positions: Dict[str, float],
-                         default_width: float = 60.0,
-                         min_width: float = 8.0,
-                         fraction_of_min_gap: float = 0.8) -> float:
+# ── Map helpers ──────────────────────────────────────────────────────────────
+def add_labeled_point(fmap, lat, lon, name, color_hex):
+    folium.CircleMarker(
+        location=(lat, lon),
+        radius=CIRCLE_RADIUS_PX,
+        color=CIRCLE_STROKE,
+        weight=CIRCLE_STROKE_W,
+        fill=True,
+        fill_color=color_hex,
+        fill_opacity=CIRCLE_FILL_OPACITY
+    ).add_to(fmap)
+
+    label_html = (
+        f"<div style='background:transparent;border:none;box-shadow:none;pointer-events:none;"
+        f"padding:0;margin:0;transform: translate({LABEL_DX_PX}px, {LABEL_DY_PX}px);"
+        f"display:inline-block;white-space:nowrap;font-size:13px;font-weight:700;color:{color_hex};"
+        f"text-shadow:-1px -1px 0 #fff,1px -1px 0 #fff,-1px 1px 0 #fff,1px 1px 0 #fff;'>{name}</div>"
+    )
+
+    folium.Marker(
+        location=(lat, lon),
+        icon=folium.DivIcon(html=label_html, icon_size=(0, 0))
+    ).add_to(fmap)
+
+# ── UI Setup ─────────────────────────────────────────────────────────────────
+st.set_page_config(page_title="Borehole Section Profile", layout="wide")
+st.sidebar.header("Upload Files")
+
+main_file = st.sidebar.file_uploader("MAIN borehole Excel (multi-sheet OK)", type=["xlsx", "xls"])
+prop_file = st.sidebar.file_uploader("Optional PROPOSED.xlsx (multi-sheet OK)", type=["xlsx", "xls"])
+
+if main_file is None:
+    st.title("Map with Bore Logs")
+    st.info("Upload the MAIN Excel to begin.")
+    st.stop()
+
+# ── Load multi-sheet EXISTING boreholes ─────────────────────────────────────
+existing_dict = load_multisheet_existing(main_file.getvalue())
+if not existing_dict:
+    st.error("No valid borehole sheets found in uploaded file.")
+    st.stop()
+
+# Sidebar toggles + color legend
+st.sidebar.markdown("### Existing Sheets")
+selected_sheets = []
+for sheet, df_sheet in existing_dict.items():
+    color = df_sheet["Color"].iloc[0]
+    chk = st.sidebar.checkbox(f"🟢 {sheet}", value=True, help=f"Color: {color}", key=f"chk_{sheet}")
+    if chk:
+        selected_sheets.append(sheet)
+st.sidebar.markdown("---")
+
+# Combine selected sheets into single DataFrame
+df = pd.concat([existing_dict[s] for s in selected_sheets if not existing_dict[s].empty], ignore_index=True)
+
+# ── Load optional PROPOSED points ───────────────────────────────────────────
+proposed_dict = {}
+if prop_file is not None:
+    try:
+        proposed_dict = load_proposed_multisheet(prop_file.getvalue())
+    except Exception as e:
+        st.warning(f"Could not read Proposed workbook: {e}")
+        proposed_dict = {}
+
+# ── Map Display ─────────────────────────────────────────────────────────────
+st.title("Map with Bore Logs")
+
+center_lat = float(df["Latitude"].mean())
+center_lon = float(df["Longitude"].mean())
+
+fmap = Map(location=(center_lat, center_lon), zoom_start=13, control_scale=True)
+folium.raster_layers.TileLayer(
+    tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    name="Esri Satellite", attr="Tiles © Esri", overlay=False, control=True
+).add_to(fmap)
+
+# Add EXISTING boreholes grouped by sheet
+for sheet, dfx in existing_dict.items():
+    if sheet not in selected_sheets or dfx.empty:
+        continue
+    fg = folium.FeatureGroup(name=f"Existing — {sheet}", show=True)
+    color = dfx["Color"].iloc[0]
+    for _, r in dfx.iterrows():
+        nm = str(r.get("Borehole", "") or f"{sheet}-BH")
+        add_labeled_point(fg, float(r["Latitude"]), float(r["Longitude"]), nm, color)
+    fg.add_to(fmap)
+
+# Add PROPOSED boreholes grouped by sheet
+for sheet, dfp in proposed_dict.items():
+    if dfp.empty:
+        continue
+    fg = folium.FeatureGroup(name=f"Proposed — {sheet}", show=True)
+    color = dfp["Color"].iloc[0]
+    for _, r in dfp.iterrows():
+        nm = str(r.get("Name", "")) or "Proposed"
+        add_labeled_point(fg, float(r["Latitude"]), float(r["Longitude"]), nm, color)
+    fg.add_to(fmap)
+
+# Drawing tools and layer toggle
+Draw(
+    draw_options={"polyline": {"shapeOptions": {"color": "#e50000", "weight": 6}},
+                  "polygon": False, "circle": False, "rectangle": False,
+                  "marker": False, "circlemarker": False},
+    edit_options={"edit": True, "remove": True}
+).add_to(fmap)
+LayerControl(position="topright").add_to(fmap)
+
+map_out = st_folium(fmap, height=600, use_container_width=True,
+                    returned_objects=["last_active_drawing", "all_drawings"], key="map")
+# ── Extract drawn section line ──────────────────────────────────────────────
+def extract_linestring(mo):
+    lad = mo.get("last_active_drawing")
+    if isinstance(lad, dict):
+        geom = lad.get("geometry", {})
+        if geom.get("type") == "LineString" and len(geom.get("coordinates", [])) >= 2:
+            return LineString(geom["coordinates"])
+    if mo.get("all_drawings") and isinstance(mo["all_drawings"], dict):
+        for feat in reversed(mo["all_drawings"].get("features", [])):
+            geom = feat.get("geometry", {})
+            if geom.get("type") == "LineString" and len(geom.get("coordinates", [])) >= 2:
+                return LineString(geom["coordinates"])
+    return None
+
+if "section_line_coords" not in st.session_state:
+    st.session_state["section_line_coords"] = None
+
+maybe_line = extract_linestring(map_out or {})
+if maybe_line is not None:
+    st.session_state["section_line_coords"] = list(map(list, maybe_line.coords))
+
+# ── Section / Profile generation ────────────────────────────────────────────
+st.title("Section / Profile (ft) — Soil")
+corridor_ft = st.slider("Corridor width (ft)", 0, 1000, 200, 10)
+
+colA, colB = st.columns([1, 1])
+with colA:
+    show_codes = st.checkbox("Show soil code (ML/SM/...)", value=False)
+with colB:
+    show_spt = st.checkbox("Show SPT N value", value=True)
+
+if not st.session_state["section_line_coords"]:
+    st.info("Draw a polyline on the map (double-click to finish). The profiles will appear below automatically.")
+    st.stop()
+
+section_line = LineString(st.session_state["section_line_coords"])
+
+# Select EXISTING boreholes near the section corridor
+bh_coords = (
+    df.groupby("Borehole")[["Latitude", "Longitude"]].first().reset_index()
+    if "Borehole" in df.columns else
+    df.rename(columns={"Name": "Borehole"})  # fallback if Borehole col missing
+)
+rows = []
+for _, r in bh_coords.iterrows():
+    ch, off = chainage_and_offset_ft(section_line, float(r["Latitude"]), float(r["Longitude"]))
+    if off <= float(corridor_ft):
+        rows.append({"Borehole": str(r.get("Borehole", "")), "Chainage_ft": round(ch, 2)})
+
+if not rows:
+    st.warning(f"No EXISTING boreholes within {corridor_ft:.0f} ft of the drawn section.")
+    st.stop()
+
+ordered_bhs = [r["Borehole"] for r in sorted(rows, key=lambda x: (x["Chainage_ft"], x["Borehole"]))]
+xpos = {r["Borehole"]: r["Chainage_ft"] for r in rows}
+
+# ── 2D & 3D plotting utils (width & grid step) ─────────────────────────────
+def dynamic_column_width(x_positions, default_width=60.0, min_width=8.0, fraction_of_min_gap=0.8):
     xs = sorted(x_positions.values())
     if len(xs) < 2:
         return default_width
-    gaps = [xs[i+1] - xs[i] for i in range(len(xs)-1) if xs[i+1] > xs[i]]
+    gaps = [xs[i+1] - xs[i] for i in range(len(xs) - 1) if xs[i+1] > xs[i]]
     if not gaps:
         return default_width
     min_gap = min(gaps)
     width = min(default_width, fraction_of_min_gap * min_gap)
     return max(min_width, width)
 
-# ── grid step helper ─────────────────────────────────────────────────────────
 def _nice_step(rng: float, target: int = 10) -> float:
     """Choose a 'nice' step size for grid spacing over range rng."""
     if rng <= 0:
@@ -239,23 +361,21 @@ def _nice_step(rng: float, target: int = 10) -> float:
         nice = 10
     return nice * (10 ** expv)
 
-# ── 2D profile builder ───────────────────────────────────────────────────────
+# ── 2D Profile Builder (Plotly) ─────────────────────────────────────────────
 def build_plotly_profile(
-    df: pd.DataFrame, ordered_bhs: List[str], x_positions: Dict[str,float],
+    df: pd.DataFrame, ordered_bhs: List[str], x_positions: Dict[str, float],
     y_min: float, y_max: float, title: str,
     column_width: Optional[float],
-    show_codes: bool = False,
-    show_spt: bool = True,
+    show_codes: bool = False, show_spt: bool = True,
     fig_height_px: int = 1000,
 ) -> go.Figure:
     # Width is either manual (passed) or auto from spacing
     width = column_width if column_width is not None else dynamic_column_width(x_positions)
     half = width / 2.0
 
-    # Precompute x-range so we can draw background grid first
     xs = list(x_positions.values())
-    xmin = (min(xs)-half) if xs else -half
-    xmax = (max(xs)+3*half) if xs else half
+    xmin = (min(xs) - half) if xs else -half
+    xmax = (max(xs) + 3 * half) if xs else half
 
     # Adaptive label sizes depending on width
     def inner_font_for(w):
@@ -264,6 +384,7 @@ def build_plotly_profile(
         if w >= 30: return 10
         if w >= 18: return 9
         return 8
+
     def bh_font_for(w):
         if w >= 60: return 14
         if w >= 45: return 13
@@ -272,23 +393,20 @@ def build_plotly_profile(
         return 10
 
     inner_font = inner_font_for(width)
-    bh_font    = bh_font_for(width)
+    bh_font = bh_font_for(width)
 
-    # We'll build shapes in two layers (both "below"), but order matters:
-    # 1) grid_lines (drawn first -> furthest back)
-    # 2) soil_rects  (drawn after -> above the grid)
     grid_lines: List[dict] = []
     soil_rects: List[dict] = []
     annotations = []
-    used_types  = set()
+    used_types = set()
 
-    # --- Background grid as shapes (horizontal + vertical), behind everything ---
+    # Background grid (behind rectangles)
     yrng = max(1.0, y_max - y_min)
     xrng = max(1.0, xmax - xmin)
     y_step = _nice_step(yrng, target=12)
     x_step = _nice_step(xrng, target=12)
 
-    # horizontal lines
+    # Horizontal lines
     y0 = math.floor(y_min / y_step) * y_step
     y1 = math.ceil(y_max / y_step) * y_step
     yv = y0
@@ -300,7 +418,7 @@ def build_plotly_profile(
         ))
         yv += y_step
 
-    # vertical lines
+    # Vertical lines
     x0 = math.floor(xmin / x_step) * x_step
     x1 = math.ceil(xmax / x_step) * x_step
     xv = x0
@@ -315,42 +433,38 @@ def build_plotly_profile(
     # Collect water elevations per BH (one marker per BH)
     water_x, water_y = [], []
 
-    # --- Soil rectangles and labels ---
+    # Soil rectangles + labels
     for bh in ordered_bhs:
-        bore = df[df['Borehole'] == bh]
+        bore = df[df["Borehole"] == bh]
         if bore.empty:
             continue
         x = x_positions[bh]
-        top_el = bore['Elevation_From'].max()
+        top_el = bore["Elevation_From"].max()
         annotations.append(dict(
-            x=x, y=top_el+3, text=bh, showarrow=False,
+            x=x, y=top_el + 3, text=bh, showarrow=False,
             xanchor="center", yanchor="bottom",
             font=dict(size=bh_font, family="Arial Black", color="#111")
         ))
 
-        # Water elevation (if present)
-        if 'Water_Elev' in bore.columns:
-            wt_series = bore['Water_Elev'].dropna()
+        if "Water_Elev" in bore.columns:
+            wt_series = bore["Water_Elev"].dropna()
             if not wt_series.empty:
                 wt = float(wt_series.iloc[0])
                 water_x.append(x)
                 water_y.append(wt)
 
         for _, r in bore.iterrows():
-            ef, et = float(r['Elevation_From']), float(r['Elevation_To'])
-            soil = str(r['Soil_Type'])
-            spt  = str(r['SPT_Label'])
+            ef, et = float(r["Elevation_From"]), float(r["Elevation_To"])
+            soil = str(r["Soil_Type"])
+            spt = str(r.get("SPT_Label", ""))
             color = SOIL_COLOR_MAP.get(soil, "#cccccc")
             used_types.add(soil)
             soil_rects.append(dict(
-                type="rect",
-                x0=x-half, x1=x+half, y0=et, y1=ef,
+                type="rect", x0=x - half, x1=x + half, y0=et, y1=ef,
                 line=dict(color="#000", width=1.3),
-                fillcolor=color,
-                layer="below",   # above the grid (because added after grid_lines)
+                fillcolor=color, layer="below",
             ))
 
-            # Inner labels controlled by toggles
             if show_codes or show_spt:
                 if show_codes and show_spt:
                     txt = f"{soil} ({spt})"
@@ -359,23 +473,24 @@ def build_plotly_profile(
                 else:
                     txt = spt
                 annotations.append(dict(
-                    x=x, y=(ef+et)/2, text=txt, showarrow=False,
+                    x=x, y=(ef + et) / 2, text=txt, showarrow=False,
                     xanchor="center", yanchor="middle",
                     font=dict(size=inner_font, family="Arial", color="#111")
                 ))
 
-    # Legend: preferred order first, then any extra
+    # Legend (preferred order first, then extras)
     ordered_present = [s for s in ORDERED_SOIL_TYPES if s in used_types]
-    extra_present   = sorted([s for s in used_types if s not in set(ORDERED_SOIL_TYPES)])
-    legend_types    = ordered_present + extra_present
+    extra_present = sorted([s for s in used_types if s not in set(ORDERED_SOIL_TYPES)])
+    legend_types = ordered_present + extra_present
 
     fig = go.Figure()
     for soil in legend_types:
-        fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers",
-                                 marker=dict(size=12, color=SOIL_COLOR_MAP.get(soil, "#cccccc")),
-                                 name=soil, showlegend=True))
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers",
+            marker=dict(size=12, color=SOIL_COLOR_MAP.get(soil, "#cccccc")),
+            name=soil, showlegend=True
+        ))
 
-    # Water marker trace (drawn last → on top)
     if water_x:
         fig.add_trace(go.Scatter(
             x=water_x, y=water_y, mode="markers",
@@ -384,28 +499,50 @@ def build_plotly_profile(
             hovertemplate="Water Elev: %{y:.2f} ft<extra></extra>"
         ))
 
-    # Apply layout with shapes: grid first, then soil rectangles
     fig.update_layout(
         title=title,
         font=dict(family="Inter, Arial, sans-serif"),
         xaxis_title="Chainage along section (ft)", yaxis_title="Elevation (ft)",
-        shapes=grid_lines + soil_rects,              # order controls z-order under traces
+        shapes=grid_lines + soil_rects,
         annotations=annotations, height=fig_height_px,
         margin=dict(l=70, r=260, t=70, b=70), plot_bgcolor="white",
-        legend=dict(yanchor="top", y=1, xanchor="left", x=1.02, bordercolor="#ddd", borderwidth=1),
+        legend=dict(yanchor="top", y=1, xanchor="left", x=1.02,
+                    bordercolor="#ddd", borderwidth=1),
     )
-
-    # Turn OFF axis grids so they don't draw over shapes
     fig.update_xaxes(range=[xmin, xmax], showgrid=False, zeroline=False)
-    fig.update_yaxes(range=[y_min, y_max], showgrid=False, zeroline=False, scaleanchor=None)
-
+    fig.update_yaxes(range=[y_min, y_max], showgrid=False, zeroline=False)
     return fig
 
+# ── Generate 2D profile ─────────────────────────────────────────────────────
+plot_df = df[df["Borehole"].isin(ordered_bhs)]
+ymin_auto, ymax_auto = auto_y_limits(plot_df)
+fig_height_px = int(FIG_HEIGHT_IN * 50)
+
+suggested = dynamic_column_width(xpos)
+auto_width = st.checkbox("Auto column width", value=True)
+if auto_width:
+    column_width_ft = None
+    st.caption(f"Auto width ≈ **{suggested:.1f} ft** (80% of nearest spacing)")
+else:
+    minw, maxw = 8.0, 300.0
+    default_val = float(min(max(suggested, 30.0), maxw))
+    column_width_ft = st.slider("Column width (ft)", minw, maxw, default_val, 2.0)
+
+fig2d = build_plotly_profile(
+    df=plot_df, ordered_bhs=ordered_bhs, x_positions=xpos,
+    y_min=ymin_auto, y_max=ymax_auto, title=TITLE_DEFAULT,
+    column_width=column_width_ft, show_codes=show_codes, show_spt=show_spt,
+    fig_height_px=fig_height_px
+)
+st.plotly_chart(
+    fig2d, use_container_width=True,
+    config={"displaylogo": False, "toImageButtonOptions": {"format": "png", "filename": "soil_profile", "scale": 4}}
+)
 # ── 3D profile (PLAN COORDS) builder ────────────────────────────────────────
 def build_3d_profile_plan(
     df: pd.DataFrame,
     selected_bhs: List[str],
-    xy_ft: Dict[str, Tuple[float,float]],
+    xy_ft: Dict[str, Tuple[float, float]],
     y_min: float,
     y_max: float,
     title: str,
@@ -414,6 +551,7 @@ def build_3d_profile_plan(
 ) -> go.Figure:
     half = column_width_ft / 2.0
     z0 = float(df['Elevation_To'].min() if not df.empty else 0.0)
+
     def z_scale(z):  # display-only VE
         return z0 + (z - z0) * vert_exag
 
@@ -457,6 +595,7 @@ def build_3d_profile_plan(
 
     fig = go.Figure(data=meshes)
 
+    # Legend ordering similar to 2D
     ordered_present = [s for s in ORDERED_SOIL_TYPES if s in used_types]
     extra_present   = sorted([s for s in used_types if s not in set(ORDERED_SOIL_TYPES)])
     legend_types    = ordered_present + extra_present
@@ -491,180 +630,7 @@ def build_3d_profile_plan(
     )
     return fig
 
-# ── map helpers ──────────────────────────────────────────────────────────────
-def add_labeled_point(fmap: folium.Map, lat: float, lon: float, name: str, color_hex: str):
-    folium.CircleMarker(
-        location=(lat, lon), radius=CIRCLE_RADIUS_PX, color=CIRCLE_STROKE,
-        weight=CIRCLE_STROKE_W, fill=True, fill_color=color_hex, fill_opacity=CIRCLE_FILL_OPACITY
-    ).add_to(fmap)
-    label_html = (
-        f"<div style='background:transparent;border:none;box-shadow:none;pointer-events:none;"
-        f"padding:0;margin:0;transform: translate({LABEL_DX_PX}px, {LABEL_DY_PX}px);"
-        f"display:inline-block;white-space:nowrap;font-size:13px;font-weight:700;color:{color_hex};"
-        f"text-shadow:-1px -1px 0 #fff,1px -1px 0 #fff,-1px 1px 0 #fff,1px 1px 0 #fff;'>{name}</div>"
-    )
-    folium.Marker(location=(lat, lon), icon=folium.DivIcon(html=label_html, icon_size=(0,0))).add_to(fmap)
-
-# ── UI ───────────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Borehole Section Profile", layout="wide")
-
-# Sidebar uploads
-st.sidebar.header("Upload")
-main_file = st.sidebar.file_uploader("MAIN borehole Excel (Elevations/Soils/SPT)", type=["xlsx","xls"])
-prop_file = st.sidebar.file_uploader("Optional PROPOSED.xlsx (multi-sheet, lat/lon/name)", type=["xlsx","xls"])
-
-if main_file is None:
-    st.title("Map with Bore Logs")
-    st.info("Upload the MAIN Excel to begin.")
-    st.stop()
-
-# Load data
-df = load_df_from_excel(main_file)
-bh_coords = make_borehole_coords(df)
-
-# Load optional Proposed.xlsx (multi-sheet, up to 8)
-proposed_dict: Dict[str, pd.DataFrame] = {}
-if prop_file is not None:
-    try:
-        proposed_dict = load_proposed_multisheet(prop_file.getvalue())
-    except Exception as e:
-        st.warning(f"Could not read Proposed workbook: {e}")
-        proposed_dict = {}
-
-# ── 1) Map with Bore Logs ───────────────────────────────────────────────────
-st.title("Map with Bore Logs")
-
-# Map center: include proposed points (all sheets) if available
-if proposed_dict:
-    # Combine all proposed into one DF for centering
-    proposed_all = pd.concat(
-        [dfp[['Latitude','Longitude']] for dfp in proposed_dict.values() if not dfp.empty],
-        ignore_index=True
-    )
-    center_lat = float(pd.concat([bh_coords[['Latitude']], proposed_all[['Latitude']]], ignore_index=True)['Latitude'].mean())
-    center_lon = float(pd.concat([bh_coords[['Longitude']], proposed_all[['Longitude']]], ignore_index=True)['Longitude'].mean())
-else:
-    center_lat = float(bh_coords['Latitude'].mean())
-    center_lon = float(bh_coords['Longitude'].mean())
-
-fmap = Map(location=(center_lat, center_lon), zoom_start=13, control_scale=True)
-folium.raster_layers.TileLayer(
-    tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    name="Esri Satellite", attr="Tiles © Esri", overlay=False, control=True
-).add_to(fmap)
-LayerControl(position='topright').add_to(fmap)
-
-# Add existing boreholes
-for _, r in bh_coords.iterrows():
-    add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), str(r['Borehole']), EXISTING_TEXT_COLOR)
-
-# Add proposed points from multiple sheets (each sheet has its color)
-if proposed_dict:
-    for sheet, dfp in proposed_dict.items():
-        if dfp.empty: 
-            continue
-        color = dfp["Color"].iloc[0]
-        for _, r in dfp.iterrows():
-            nm = str(r.get("Name", "")).strip() or "Proposed"
-            # Do NOT add sheet name before borehole name
-            add_labeled_point(fmap, float(r['Latitude']), float(r['Longitude']), nm, color)
-
-Draw(
-    draw_options={"polyline":{"shapeOptions":{"color":"#e50000","weight":6}},
-                  "polygon":False,"circle":False,"rectangle":False,"marker":False,"circlemarker":False},
-    edit_options={"edit":True,"remove":True}
-).add_to(fmap)
-
-map_out = st_folium(
-    fmap, height=600, use_container_width=True,
-    returned_objects=["last_active_drawing","all_drawings"], key="map"
-)
-
-def extract_linestring(mo) -> LineString | None:
-    lad = mo.get("last_active_drawing")
-    if isinstance(lad, dict):
-        geom = lad.get("geometry", {})
-        if geom.get("type") == "LineString" and len(geom.get("coordinates", [])) >= 2:
-            return LineString(geom["coordinates"])
-    if mo.get("all_drawings") and isinstance(mo["all_drawings"], dict):
-        for feat in reversed(mo["all_drawings"].get("features", [])):
-            geom = feat.get("geometry", {})
-            if geom.get("type") == "LineString" and len(geom.get("coordinates", [])) >= 2:
-                return LineString(geom["coordinates"])
-    return None
-
-if "section_line_coords" not in st.session_state:
-    st.session_state["section_line_coords"] = None
-
-maybe_line = extract_linestring(map_out or {})
-if maybe_line is not None:
-    st.session_state["section_line_coords"] = list(map(list, maybe_line.coords))
-
-# ── 2) Section / Profile heading + Corridor slider ──────────────────────────
-st.title("Section / Profile (ft) — Soil")
-corridor_ft = st.slider("Corridor width (ft)", min_value=0, max_value=1000, value=200, step=10)
-
-# Labels + export controls
-with st.expander("Label & Export Options", expanded=True):
-    colA, colB = st.columns([1,1])
-    with colA:
-        show_codes = st.checkbox("Show soil code (ML/SM/…)", value=False)
-    with colB:
-        show_spt = st.checkbox("Show SPT N value", value=True)
-
-if not st.session_state["section_line_coords"]:
-    st.info("Draw a polyline on the map (double-click to finish). The profiles will appear below automatically.")
-    st.stop()
-
-section_line = LineString(st.session_state["section_line_coords"])
-
-# Select EXISTING boreholes within corridor (as per your original logic)
-rows = []
-for _, r in bh_coords.iterrows():
-    ch, off = chainage_and_offset_ft(section_line, float(r['Latitude']), float(r['Longitude']))
-    if off <= float(corridor_ft):
-        rows.append({"Borehole": r["Borehole"], "Chainage_ft": round(ch,2)})
-
-if not rows:
-    st.warning(f"No EXISTING boreholes within {corridor_ft:.0f} ft of the drawn section.")
-    st.stop()
-
-ordered_bhs = [r["Borehole"] for r in sorted(rows, key=lambda x: (x["Chainage_ft"], x["Borehole"]))]
-xpos = {r["Borehole"]: r["Chainage_ft"] for r in rows}
-
-# ── 3) Interactive 2D profile (chainage) — with manual width option ─────────
-plot_df = df[df['Borehole'].isin(ordered_bhs)]
-ymin_auto, ymax_auto = auto_y_limits(plot_df)
-fig_height_px = int(FIG_HEIGHT_IN * 50)
-
-# Auto width vs manual slider
-suggested = dynamic_column_width(xpos)  # based on 80% of min gap
-auto_width = st.checkbox("Auto column width", value=True)
-if auto_width:
-    column_width_ft = None
-    st.caption(f"Auto width ≈ **{suggested:.1f} ft** (80% of nearest spacing)")
-else:
-    minw, maxw = 8.0, 300.0
-    default_val = float(min(max(suggested, 30.0), maxw))
-    column_width_ft = st.slider("Column width (ft)", min_value=minw, max_value=maxw,
-                                value=default_val, step=2.0)
-
-fig2d = build_plotly_profile(
-    df=plot_df, ordered_bhs=ordered_bhs, x_positions=xpos,
-    y_min=ymin_auto, y_max=ymax_auto, title=TITLE_DEFAULT,
-    column_width=column_width_ft,
-    show_codes=show_codes, show_spt=show_spt,
-    fig_height_px=fig_height_px
-)
-
-# High-res export
-modebar_cfg = {
-    "displaylogo": False,
-    "toImageButtonOptions": {"format": "png", "filename": "soil_profile", "scale": 4},
-}
-st.plotly_chart(fig2d, use_container_width=True, config=modebar_cfg)
-
-# ── 4) Interactive 3D Borehole View (PLAN COORDS) ───────────────────────────
+# ── 3D Borehole View (PLAN) ─────────────────────────────────────────────────
 st.markdown("### 3D Borehole View (ft, Plan Coordinates)")
 left, right = st.columns([1, 3])
 with left:
@@ -677,8 +643,10 @@ bhs_for_3d = ordered_bhs if limit_to_corridor else \
 
 sel_coords = bh_coords[bh_coords['Borehole'].isin(bhs_for_3d)]
 lat0 = float(sel_coords['Latitude'].mean()); lon0 = float(sel_coords['Longitude'].mean())
-xy_map = {row['Borehole']: latlon_to_local_xy_ft(float(row['Latitude']), float(row['Longitude']), lat0, lon0)
-          for _, row in sel_coords.iterrows()}
+xy_map = {
+    row['Borehole']: latlon_to_local_xy_ft(float(row['Latitude']), float(row['Longitude']), lat0, lon0)
+    for _, row in sel_coords.iterrows()
+}
 
 plot_df3d = df[df['Borehole'].isin(bhs_for_3d)]
 ymin_auto3d, ymax_auto3d = auto_y_limits(plot_df3d)
@@ -688,4 +656,7 @@ fig3d = build_3d_profile_plan(
     y_min=ymin_auto3d, y_max=ymax_auto3d, title=TITLE_DEFAULT,
     column_width_ft=60.0, vert_exag=vert_exag
 )
-st.plotly_chart(fig3d, use_container_width=True, config={"displaylogo": False, "toImageButtonOptions": {"scale": 3}})
+st.plotly_chart(
+    fig3d, use_container_width=True,
+    config={"displaylogo": False, "toImageButtonOptions": {"scale": 3}}
+)
