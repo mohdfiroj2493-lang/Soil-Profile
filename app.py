@@ -447,11 +447,14 @@ def build_plotly_profile(
         ))
 
         if "Water_Elev" in bore.columns:
-            wt_series = bore["Water_Elev"].dropna()
+            wt_series = pd.to_numeric(bore["Water_Elev"], errors="coerce").dropna()
             if not wt_series.empty:
-                wt = float(wt_series.iloc[0])
-                water_x.append(x)
-                water_y.append(wt)
+                try:
+                    wt = float(wt_series.iloc[0])
+                    water_x.append(x)
+                    water_y.append(wt)
+                except (ValueError, TypeError):
+                    pass
 
         for _, r in bore.iterrows():
             ef, et = float(r["Elevation_From"]), float(r["Elevation_To"])
