@@ -111,14 +111,17 @@ def load_multisheet_existing(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
         df["SPT_Label"] = df.get("SPT", pd.NA).apply(compute_spt_avg)
 
         # 🟡 Normalize soil names: extract codes in parentheses or detect Topsoil
-        if "Soil_Type" in df.columns:
-            df["Soil_Type"] = df["Soil_Type"].astype(str)
-            df["Soil_Type"] = df["Soil_Type"].str.extract(r"\((.*?)\)").fillna(
-                df["Soil_Type"].str.replace(
-                    r"^.*top\s*soil.*$", "Topsoil", case=False, regex=True
-                )
+        soil_col = None
+        for c in df.columns:
+            if str(c).strip().lower() in ["soil_type", "soil layer description", "soil layer"]:
+                soil_col = c
+                break
+        if soil_col:
+            df[soil_col] = df[soil_col].astype(str)
+            df[soil_col] = df[soil_col].str.extract(r"\((.*?)\)").fillna(
+                df[soil_col].str.replace(r"^.*top\s*soil.*$", "Topsoil", case=False, regex=True)
             )
-
+            df.rename(columns={soil_col: "Soil_Type"}, inplace=True)
         # Assign metadata
         df["Sheet"] = sheet
         df["Color"] = EXISTING_TEXT_COLORS[i % len(EXISTING_TEXT_COLORS)]
