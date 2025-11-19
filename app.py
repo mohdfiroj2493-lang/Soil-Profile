@@ -295,7 +295,7 @@ for sheet, dfp in proposed_dict.items():
 
 # Drawing tools and layer toggle
 Draw(
-    draw_options={"polyline": {"shapeOptions": {"color": "#e50000", "weight": 6}},
+    draw_options={"polyline": {"shapeOptions": {"color": "#0000ff", "weight": 6}},
                   "polygon": False, "circle": False, "rectangle": False,
                   "marker": False, "circlemarker": False},
     edit_options={"edit": True, "remove": True}
