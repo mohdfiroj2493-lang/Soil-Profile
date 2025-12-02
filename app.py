@@ -489,26 +489,44 @@ def build_plotly_profile(
         for _, r in bore.iterrows():
             ef, et = float(r["Elevation_From"]), float(r["Elevation_To"])
             soil = str(r["Soil_Type"])
-            spt = str(r.get("SPT_Label", ""))
+            spt_val = r.get("SPT_Label", "")
+            spt = "" if pd.isna(spt_val) else str(spt_val)
+
             color = SOIL_COLOR_MAP.get(soil, "#cccccc")
             used_types.add(soil)
+
+            # Rectangle for the soil layer
             soil_rects.append(dict(
                 type="rect", x0=x - half, x1=x + half, y0=et, y1=ef,
                 line=dict(color="#000", width=1.3),
                 fillcolor=color, layer="below",
             ))
 
-            if show_codes or show_spt:
-                if show_codes and show_spt:
-                    txt = f"{soil} ({spt})"
-                elif show_codes:
-                    txt = soil
-                else:
-                    txt = spt
+            mid_y = (ef + et) / 2.0
+            offset = max(4.0, half * 0.15)  # small horizontal offset from rectangle edge
+
+            # Soil code OUTSIDE on the LEFT
+            if show_codes:
                 annotations.append(dict(
-                    x=x, y=(ef + et) / 2, text=txt, showarrow=False,
-                    xanchor="center", yanchor="middle",
-                    font=dict(size=inner_font, family="Arial", color="#111")
+                    x=x - half - offset,
+                    y=mid_y,
+                    text=soil,
+                    showarrow=False,
+                    xanchor="right",
+                    yanchor="middle",
+                    font=dict(size=inner_font, family="Arial", color="#111"),
+                ))
+
+            # SPT value OUTSIDE on the RIGHT (just the number)
+            if show_spt and spt not in ("", "nan"):
+                annotations.append(dict(
+                    x=x + half + offset,
+                    y=mid_y,
+                    text=spt,
+                    showarrow=False,
+                    xanchor="left",
+                    yanchor="middle",
+                    font=dict(size=inner_font, family="Arial", color="#111"),
                 ))
 
     # Legend (preferred order first, then extras)
