@@ -69,17 +69,17 @@ RENAME_MAP = {
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def compute_spt_avg(value):
     if value is None:
-        return "N = N/A"
+        return ""
     s = str(value).strip()
     if s.upper() == "N/A" or s == "":
-        return "N = N/A"
+        return ""
     nums = []
     for x in s.split(","):
         try:
             nums.append(float(x.strip().replace('"','')))
         except ValueError:
             pass
-    return f"N = {round(sum(nums)/len(nums), 2)}" if nums else "N = N/A"
+    return round(sum(nums)/len(nums), 2) if nums else ""
 
 @st.cache_data(show_spinner=False)
 def load_multisheet_existing(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
