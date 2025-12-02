@@ -68,6 +68,7 @@ RENAME_MAP = {
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def compute_spt_avg(value):
+    """Return ONLY the numeric average SPT value (e.g., 9.2) or '' if not valid."""
     if value is None:
         return ""
     s = str(value).strip()
@@ -76,10 +77,10 @@ def compute_spt_avg(value):
     nums = []
     for x in s.split(","):
         try:
-            nums.append(float(x.strip().replace('"','')))
+            nums.append(float(x.strip().replace('"', '')))
         except ValueError:
             pass
-    return round(sum(nums)/len(nums), 2) if nums else ""
+    return round(sum(nums) / len(nums), 2) if nums else ""
 
 @st.cache_data(show_spinner=False)
 def load_multisheet_existing(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
