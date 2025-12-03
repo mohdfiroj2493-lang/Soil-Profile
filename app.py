@@ -435,7 +435,7 @@ def build_plotly_profile(
     # Background grid (behind rectangles)
     yrng = max(1.0, y_max - y_min)
     xrng = max(1.0, xmax - xmin)
-    y_step = _nice_step(yrng, target=24)
+    y_step = _nice_step(yrng, target=10)
     x_step = _nice_step(xrng, target=12)
 
     # Horizontal lines
