@@ -577,7 +577,7 @@ if auto_width:
     column_width_ft = None
     st.caption(f"Auto width ≈ **{suggested:.1f} ft** (80% of nearest spacing)")
 else:
-    minw, maxw = 8.0, 300.0
+    minw, maxw = 4.0, 300.0
     default_val = float(min(max(suggested, 30.0), maxw))
     column_width_ft = st.slider("Column width (ft)", minw, maxw, default_val, 2.0)
 
