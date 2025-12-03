@@ -554,7 +554,7 @@ def build_plotly_profile(
 
     fig.update_layout(
         title=title,
-        font=dict(family="Inter, Arial, sans-serif" color="black"),
+        font=dict(family="Inter, Arial, sans-serif"),
         xaxis_title="Chainage along section (ft)", yaxis_title="Elevation (ft)",
         shapes=grid_lines + soil_rects,
         annotations=annotations, height=fig_height_px,
