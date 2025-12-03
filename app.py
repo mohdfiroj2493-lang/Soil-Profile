@@ -435,7 +435,7 @@ def build_plotly_profile(
     # Background grid (behind rectangles)
     yrng = max(1.0, y_max - y_min)
     xrng = max(1.0, xmax - xmin)
-    y_step = _nice_step(yrng, target=12)
+    y_step = _nice_step(yrng, target=50)
     x_step = _nice_step(xrng, target=12)
 
     # Horizontal lines
@@ -563,7 +563,7 @@ def build_plotly_profile(
                     bordercolor="#ddd", borderwidth=1),
     )
     fig.update_xaxes(range=[xmin, xmax], showgrid=False, zeroline=False)
-    fig.update_yaxes(range=[y_min, y_max], dtick=20, tick0=0, showgrid=False, zeroline=False)
+    fig.update_yaxes(range=[y_min, y_max], showgrid=False, zeroline=False)
     return fig
 
 # ── Generate 2D profile ─────────────────────────────────────────────────────
