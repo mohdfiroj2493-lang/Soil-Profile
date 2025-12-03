@@ -554,7 +554,7 @@ def build_plotly_profile(
 
     fig.update_layout(
         title=title,
-        font=dict(family="Inter, Arial, sans-serif"),
+        font=dict(family="Inter, Arial, sans-serif" color="black"),
         xaxis_title="Chainage along section (ft)", yaxis_title="Elevation (ft)",
         shapes=grid_lines + soil_rects,
         annotations=annotations, height=fig_height_px,
@@ -562,8 +562,8 @@ def build_plotly_profile(
         legend=dict(yanchor="top", y=1, xanchor="left", x=1.02,
                     bordercolor="#ddd", borderwidth=1),
     )
-    fig.update_xaxes(range=[xmin, xmax], tickfont=dict(color="black", size=12), titlefont=dict(color="black", size=14), showgrid=False, zeroline=False)
-    fig.update_yaxes(range=[y_min, y_max], tickfont=dict(color="black", size=12), titlefont=dict(color="black", size=14), showgrid=False, zeroline=False)
+    fig.update_xaxes(range=[xmin, xmax], tickfont=dict(color="black", size=12), showgrid=False, zeroline=False)
+    fig.update_yaxes(range=[y_min, y_max], tickfont=dict(color="black", size=12), showgrid=False, zeroline=False)
     return fig
 
 # ── Generate 2D profile ─────────────────────────────────────────────────────
