@@ -562,8 +562,8 @@ def build_plotly_profile(
         legend=dict(yanchor="top", y=1, xanchor="left", x=1.02,
                     bordercolor="#ddd", borderwidth=1),
     )
-    fig.update_xaxes(range=[xmin, xmax], showgrid=False, zeroline=False)
-    fig.update_yaxes(range=[y_min, y_max], showgrid=False, zeroline=False)
+    fig.update_xaxes(range=[xmin, xmax], tickfont=dict(color="black", size=12), titlefont=dict(color="black", size=14), showgrid=False, zeroline=False)
+    fig.update_yaxes(range=[y_min, y_max], tickfont=dict(color="black", size=12), titlefont=dict(color="black", size=14), showgrid=False, zeroline=False)
     return fig
 
 # ── Generate 2D profile ─────────────────────────────────────────────────────
