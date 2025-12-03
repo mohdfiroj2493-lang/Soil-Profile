@@ -425,6 +425,7 @@ def build_plotly_profile(
 
     inner_font = inner_font_for(width)
     bh_font = bh_font_for(width)
+    label_font = max(inner_font + 2, 12)
 
     grid_lines: List[dict] = []
     soil_rects: List[dict] = []
@@ -515,7 +516,7 @@ def build_plotly_profile(
                     showarrow=False,
                     xanchor="right",
                     yanchor="middle",
-                    font=dict(size=inner_font, family="Arial", color="#111"),
+                    font=dict(size=label_font, family="Arial", color="#111"),
                 ))
 
             # SPT value OUTSIDE on the RIGHT (just the number)
@@ -527,7 +528,7 @@ def build_plotly_profile(
                     showarrow=False,
                     xanchor="left",
                     yanchor="middle",
-                    font=dict(size=inner_font, family="Arial", color="#111"),
+                    font=dict(size=label_font, family="Arial", color="#111"),
                 ))
 
     # Legend (preferred order first, then extras)
