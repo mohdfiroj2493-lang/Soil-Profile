@@ -66,20 +66,6 @@ RENAME_MAP = {
     "Latitude": "Latitude", "Longitude": "Longitude",
     "SPT N-Value": "SPT", "Elevation Water Table": "Water_Elev",
 }
-SOIL_HATCH_MAP = {
-    "SM": "xx",
-    "SC": "///",
-    "SP": "...",
-    "CL": "\\\\",
-    "CH": "++",
-    "GM": "oo",
-    "GP-GM":"oo",
-    "GP-GC":"oo",
-    "GC": "xx",
-    "MH": "...",
-    "Topsoil": "////",
-    "Rock": "////",
-}
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def compute_spt_avg(value):
@@ -608,6 +594,20 @@ st.plotly_chart(
 st.markdown("### Pattern-Filled Soil Profile (Static)")
 fig_mat = plot_profile_matplotlib(plot_df, ordered_bhs, xpos, ymin_auto, ymax_auto)
 st.pyplot(fig_mat)
+SOIL_HATCH_MAP = {
+    "SM": "xx",
+    "SC": "///",
+    "SP": "...",
+    "CL": "\\\\",
+    "CH": "++",
+    "GM": "oo",
+    "GP-GM":"oo",
+    "GP-GC":"oo",
+    "GC": "xx",
+    "MH": "...",
+    "Topsoil": "////",
+    "Rock": "////",
+}
 def plot_profile_matplotlib(df, ordered_bhs, x_positions, y_min, y_max, col_width=8.0):
     fig, ax = plt.subplots(figsize=(14, 8))
     half = col_width / 2.0
