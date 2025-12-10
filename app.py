@@ -73,7 +73,10 @@ SOIL_HATCH_MAP = {
     "CL": "\\\\",
     "CH": "++",
     "GM": "oo",
+    "GP-GM":"oo",
+    "GP-GC":"oo",
     "GC": "xx",
+    "MH": "...",
     "Topsoil": "////",
     "Rock": "////",
 }
