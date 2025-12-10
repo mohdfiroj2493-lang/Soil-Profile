@@ -197,76 +197,6 @@ def auto_y_limits(df, pad_ratio=0.05):
     pad = rng * pad_ratio
     return y_min - pad, y_max + pad
 
-# ── Matplotlib Pattern-Filled Profile (Static) ──────────────────────────────
-SOIL_HATCH_MAP = {
-    "SM": "xx",
-    "SC": "///",
-    "SP": "...",
-    "CL": "\\\\",
-    "CH": "++",
-    "GM": "oo",
-    "GP-GM": "oo",
-    "GP-GC": "oo",
-    "GC": "xx",
-    "MH": "...",
-    "Topsoil": "////",
-    "Rock": "////",
-}
-
-def plot_profile_matplotlib(
-    df: pd.DataFrame,
-    ordered_bhs: List[str],
-    x_positions: Dict[str, float],
-    y_min: float,
-    y_max: float,
-    col_width: float = 8.0,
-):
-    fig, ax = plt.subplots(figsize=(14, 8))
-    half = col_width / 2.0
-    for bh in ordered_bhs:
-        bore = df[df["Borehole"] == bh]
-        if bore.empty:
-            continue
-        x = x_positions[bh]
-        # Draw soil layers with hatching
-        for _, r in bore.iterrows():
-            ef, et = float(r["Elevation_From"]), float(r["Elevation_To"])
-            soil = str(r["Soil_Type"])
-            hatch = SOIL_HATCH_MAP.get(soil, "")
-            rect = plt.Rectangle(
-                (x - half, et),
-                col_width,
-                ef - et,
-                edgecolor="black",
-                facecolor="none",
-                hatch=hatch,
-                linewidth=1.2,
-            )
-            ax.add_patch(rect)
-
-        # Borehole label at top
-        top_el = bore["Elevation_From"].max()
-        ax.text(
-            x,
-            top_el + 2,
-            bh,
-            ha="center",
-            va="bottom",
-            fontsize=12,
-            fontweight="bold",
-        )
-    ax.set_xlim(
-        min(x_positions.values()) - col_width * 2,
-        max(x_positions.values()) + col_width * 2,
-    )
-    ax.set_ylim(y_min, y_max)
-    ax.invert_yaxis()
-    ax.set_xlabel("Chainage along section (ft)")
-    ax.set_ylabel("Elevation (ft)")
-    ax.grid(True, axis="y", color="#bbbbbb", linewidth=0.6, alpha=0.6)
-    return fig
-
-
 # ── Map helpers ──────────────────────────────────────────────────────────────
 def add_labeled_point(fmap, lat, lon, name, color_hex):
     folium.CircleMarker(
@@ -661,9 +591,6 @@ st.plotly_chart(
     config={"displaylogo": False, "toImageButtonOptions": {"format": "png", "filename": "soil_profile", "scale": 4}}
 )
 
-st.markdown("### Pattern-Filled Soil Profile (Static)")
-fig_mat = plot_profile_matplotlib(plot_df, ordered_bhs, xpos, ymin_auto, ymax_auto)
-st.pyplot(fig_mat)
 
 # ── 3D profile (PLAN COORDS) builder ────────────────────────────────────────
 def build_3d_profile_plan(
