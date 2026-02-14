@@ -45,7 +45,7 @@ SOIL_COLOR_MAP = {
     "SM-SC": "#e1bee7","SM-ML": "#dcedc8","SC-CL": "#ffee58","SC-SM": "#fff59d","SP-SM": "#c1f80a","SP-SC": "#7fff00","SW-SM": "#90ee90",
     # Rock / Fill / Weathered
     "PWR": "#808080","RF": "#929591","Rock": "#c0c0c0","BASALT": "#bbf90f","BRECCIA": "#f5deb3","CHERT": "#a0522d",
-    "CLAYSTONE": "#3d1c02","SANDY CLAYSTONE": "#b75203","SILTY CLAYSTONE": "#b2713d",
+    "CLAYSTONE": "#c7c10c","SANDY CLAYSTONE": "#ddd618","SILTY CLAYSTONE": "#cdc50a",
     "DIATOMITE": "#7bc8f6","DOLOMITE": "#000080", "LIMESTONE": "#006400","MUDSTONE": "#add8e6",
     "SANDSTONE": "#5d1451","CLAYEY SANDSTONE": "#952e8f","SILTY SANDSTONE": "#e03fd8",
     "SHALE": "#13eac9",
