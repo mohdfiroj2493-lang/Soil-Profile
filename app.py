@@ -544,7 +544,6 @@ def build_plotly_profile(
             marker=dict(size=12, color=SOIL_COLOR_MAP.get(soil, "#cccccc")),
             name=soil, showlegend=True
         ))
-
     if water_x:
         fig.add_trace(go.Scatter(
             x=water_x, y=water_y, mode="markers",
@@ -552,15 +551,21 @@ def build_plotly_profile(
             name="Water Table",
             hovertemplate="Water Elev: %{y:.2f} ft<extra></extra>"
         ))
-
-        fig.update_layout(
-            title=dict(text=title,font=dict(color="black", size=18),),
-            font=dict(family="Inter, Arial, sans-serif"),xaxis=dict(title=dict(text="Chainage along section (ft)",font=dict(color="black", size=14),)),yaxis=dict(title=dict(text="Elevation (ft)",font=dict(color="black", size=14),) ),
-            shapes=grid_lines + soil_rects,
-            annotations=annotations,
-            height=fig_height_px,
-            margin=dict(l=70, r=260, t=70, b=70),
-            plot_bgcolor="white", legend=dict(yanchor="top", y=1, xanchor="left", x=1.02, bordercolor="#ddd",borderwidth=1,), )
+    
+    # ✅ ALWAYS apply layout (even if no water table exists)
+    fig.update_layout(
+        title=dict(text=title, font=dict(color="black", size=18)),
+        font=dict(family="Inter, Arial, sans-serif"),
+        xaxis=dict(title=dict(text="Chainage along section (ft)", font=dict(color="black", size=14))),
+        yaxis=dict(title=dict(text="Elevation (ft)", font=dict(color="black", size=14))),
+        shapes=grid_lines + soil_rects,
+        annotations=annotations,
+        height=fig_height_px,
+        margin=dict(l=70, r=260, t=70, b=70),
+        plot_bgcolor="white",
+        legend=dict(yanchor="top", y=1, xanchor="left", x=1.02, bordercolor="#ddd", borderwidth=1),
+    )
+    
     fig.update_xaxes(range=[xmin, xmax], tickfont=dict(color="black", size=12), showgrid=False, zeroline=False)
     fig.update_yaxes(range=[y_min, y_max], tickfont=dict(color="black", size=12), showgrid=False, zeroline=False)
     return fig
