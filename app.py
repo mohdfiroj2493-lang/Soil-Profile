@@ -45,12 +45,12 @@ SOIL_COLOR_MAP = {
     "SM-SC": "#e1bee7","SM-ML": "#dcedc8","SC-CL": "#ffee58","SC-SM": "#fff59d","SP-SM": "#c1f80a","SP-SC": "#7fff00","SW-SM": "#90ee90",
     # Rock / Fill / Weathered
     "PWR": "#808080","RF": "#929591","Rock": "#c0c0c0","BASALT": "#bbf90f","BRECCIA": "#f5deb3","CHERT": "#a0522d",
-    "CLAYSTONE": "#40e0d0","SANDY CLAYSTONE": "#40e0d0","SILTY CLAYSTONE": "#40e0d0",
+    "CLAYSTONE": "#3d1c02","SANDY CLAYSTONE": "#b75203","SILTY CLAYSTONE": "#b2713d",
     "DIATOMITE": "#7bc8f6","DOLOMITE": "#000080", "LIMESTONE": "#006400","MUDSTONE": "#add8e6",
-    "SANDSTONE": "#c79fef","CLAYEY SANDSTONE": "#c79fef","SILTY SANDSTONE": "#c79fef",
+    "SANDSTONE": "#5d1451","CLAYEY SANDSTONE": "#952e8f","SILTY SANDSTONE": "#e03fd8",
     "SHALE": "#13eac9",
-    "CONGLOMERATE": "#13eac9", "BASALT CONGLOMERATE": "#ffff14",
-    "SILTSTONE": "#ffd700","SANDY SILTSTONE": "#ffd700",
+    "CONGLOMERATE": "#0a5f38", "BASALT CONGLOMERATE": "#0cdc53",
+    "SILTSTONE": "#26538d","SANDY SILTSTONE": "#448ee4",
 }
 ORDERED_SOIL_TYPES = [
     "Topsoil", "Water",
