@@ -76,7 +76,7 @@ SOIL_HATCH_MAP = {
     "CLAYSTONE": "....", "SANDY CLAYSTONE": "///", "SILTY CLAYSTONE": "+++",
     "SILTSTONE": "....", "SANDY SILTSTONE": "///",
     "CONGLOMERATE": "ooo",
-    "SANDSTONE": "....", "CLAYEY SANDSTONE": "/././.", "SILTY SANDSTONE": ".+.+.+", 
+    "SANDSTONE": "....", "CLAYEY SANDSTONE": "/././.", "SILTY SANDSTONE": "+++", 
     "SHALE": "----",
 }
 
