@@ -72,7 +72,7 @@ SOIL_HATCH_MAP = {
     "Topsoil": "....", "Water": "////",
 
     # Rock / lithology (examples)
-    "Rock": "xx", "PWR": "..", "RF": "++",
+    "Rock": "xx", "PWR": "xx", "RF": "++",
     "SANDSTONE": "///", "CLAYSTONE": "....", "SILTSTONE": "\\\\",
     "SHALE": "----",
 }
@@ -191,8 +191,6 @@ def build_matplotlib_profile_hatched(
 
     fig.tight_layout()
     return fig
-
-
 
 ORDERED_SOIL_TYPES = [
     "Topsoil", "Water",
@@ -743,7 +741,7 @@ st.plotly_chart(
     config={"displaylogo": False, "toImageButtonOptions": {"format": "png", "filename": "soil_profile", "scale": 4}}
 )
 
-st.markdown("### Soil Profile — Hatched (Matplotlib)")
+st.markdown("### Soil Profile")
 
 # You can control figure size based on number of boreholes if you want:
 fig_hatched = build_matplotlib_profile_hatched(
