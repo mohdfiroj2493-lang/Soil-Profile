@@ -18,6 +18,7 @@ from folium import Map, LayerControl
 from folium.plugins import Draw
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 
 # ── Visual config ────────────────────────────────────────────────────────────
 EXISTING_TEXT_COLORS = [
@@ -52,6 +53,147 @@ SOIL_COLOR_MAP = {
     "CONGLOMERATE": "#0cdc53", "BASALT CONGLOMERATE": "#0cdc53",
     "SILTSTONE": "#26538d","SANDY SILTSTONE": "#448ee4",
 }
+
+
+
+# ── Hatch patterns per soil type (edit as you like) ──────────────────────────
+SOIL_HATCH_MAP = {
+    # Fine soils
+    "CL": "....", "CH": "oooo", "ML": "////", "MH": "\\\\\\\\",
+    "CL-ML": "xx", "CL-CH": "++", "ML-CL": "--",
+
+    # Sands/Gravels
+    "SM": "///", "SP": "xx", "SC": "\\\\", "SW": "++",
+    "GM": "oo", "GP": "++", "GC": "xx", "GW": "..",
+    "SM-SC": "/\\", "SM-ML": "..", "SC-CL": "xx", "SC-SM": "++",
+    "SP-SM": "oo", "SP-SC": "xx", "SW-SM": "..",
+
+    # Special
+    "Topsoil": "....", "Water": "////",
+
+    # Rock / lithology (examples)
+    "Rock": "xx", "PWR": "..", "RF": "++",
+    "SANDSTONE": "///", "CLAYSTONE": "....", "SILTSTONE": "\\\\",
+    "SHALE": "----",
+}
+
+def build_matplotlib_profile_hatched(
+    df: pd.DataFrame,
+    ordered_bhs: List[str],
+    x_positions: Dict[str, float],
+    y_min: float,
+    y_max: float,
+    title: str,
+    column_width: Optional[float],
+    show_codes: bool = False,
+    show_spt: bool = True,
+    figsize: Tuple[float, float] = (18, 10),
+):
+    """
+    Matplotlib version of the soil profile with hatch patterns inside rectangles.
+    """
+    width = column_width if column_width is not None else dynamic_column_width(x_positions)
+    half = width / 2.0
+
+    xs = list(x_positions.values())
+    xmin = (min(xs) - half) if xs else -half
+    xmax = (max(xs) + 3 * half) if xs else half
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.set_title(title + " — Hatched", fontsize=16)
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(y_min, y_max)
+    ax.set_xlabel("Chainage along section (ft)")
+    ax.set_ylabel("Elevation (ft)")
+    ax.grid(True, which="both", linewidth=0.5)
+
+    used_types = set()
+
+    # Water table markers (one per BH if available)
+    water_x, water_y = [], []
+
+    for bh in ordered_bhs:
+        bore = df[df["Borehole"] == bh]
+        if bore.empty:
+            continue
+
+        x = x_positions[bh]
+        top_el = float(bore["Elevation_From"].max())
+        ax.text(x, top_el + 3, bh, ha="center", va="bottom", fontsize=10, fontweight="bold")
+
+        # Water table (optional)
+        if "Water_Elev" in bore.columns:
+            wt_series = pd.to_numeric(bore["Water_Elev"], errors="coerce").dropna()
+            if not wt_series.empty:
+                try:
+                    wt = float(wt_series.iloc[0])
+                    water_x.append(x)
+                    water_y.append(wt)
+                except (ValueError, TypeError):
+                    pass
+
+        # Soil layers
+        for _, r in bore.iterrows():
+            ef = float(r["Elevation_From"])
+            et = float(r["Elevation_To"])
+            soil = str(r["Soil_Type"])
+            used_types.add(soil)
+
+            face = SOIL_COLOR_MAP.get(soil, "#cccccc")
+            hatch = SOIL_HATCH_MAP.get(soil, "////")  # default hatch if unknown
+
+            rect = mpatches.Rectangle(
+                (x - half, et),            # (x0, y0)
+                width,                     # w
+                (ef - et),                 # h
+                facecolor=face,
+                edgecolor="black",
+                linewidth=1.2,
+                hatch=hatch
+            )
+            ax.add_patch(rect)
+
+            mid_y = (ef + et) / 2.0
+            offset = max(4.0, half * 0.15)
+
+            # Soil code outside LEFT
+            if show_codes:
+                ax.text(x - half - offset, mid_y, soil, ha="right", va="center", fontsize=9)
+
+            # SPT outside RIGHT
+            if show_spt:
+                spt_val = r.get("SPT_Label", "")
+                spt = "" if pd.isna(spt_val) else str(spt_val)
+                if spt not in ("", "nan"):
+                    ax.text(x + half + offset, mid_y, spt, ha="left", va="center", fontsize=9)
+
+    if water_x:
+        ax.scatter(water_x, water_y, marker="v", s=70)
+        ax.legend(["Water Table"], loc="upper left")
+
+    # Legend: show soil types present (ordered)
+    ordered_present = [s for s in ORDERED_SOIL_TYPES if s in used_types]
+    extra_present = sorted([s for s in used_types if s not in set(ORDERED_SOIL_TYPES)])
+    legend_types = ordered_present + extra_present
+
+    handles = []
+    for s in legend_types:
+        handles.append(
+            mpatches.Patch(
+                facecolor=SOIL_COLOR_MAP.get(s, "#cccccc"),
+                edgecolor="black",
+                hatch=SOIL_HATCH_MAP.get(s, "////"),
+                label=s
+            )
+        )
+    if handles:
+        ax.legend(handles=handles, bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0.)
+
+    fig.tight_layout()
+    return fig
+
+
+
 ORDERED_SOIL_TYPES = [
     "Topsoil", "Water",
     "SM", "SM-ML", "SM-SC", "SP-SM", "SP-SC", "SP", "SW",
@@ -600,6 +742,24 @@ st.plotly_chart(
     fig2d, use_container_width=True,
     config={"displaylogo": False, "toImageButtonOptions": {"format": "png", "filename": "soil_profile", "scale": 4}}
 )
+
+st.markdown("### Soil Profile — Hatched (Matplotlib)")
+
+# You can control figure size based on number of boreholes if you want:
+fig_hatched = build_matplotlib_profile_hatched(
+    df=plot_df,
+    ordered_bhs=ordered_bhs,
+    x_positions=xpos,
+    y_min=ymin_auto,
+    y_max=ymax_auto,
+    title=TITLE_DEFAULT,
+    column_width=column_width_ft,   # uses same width logic as Plotly
+    show_codes=show_codes,
+    show_spt=show_spt,
+    figsize=(18, 10)
+)
+
+st.pyplot(fig_hatched, clear_figure=True)
 
 
 # ── 3D profile (PLAN COORDS) builder ────────────────────────────────────────
