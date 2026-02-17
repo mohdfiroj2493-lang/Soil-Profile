@@ -73,7 +73,7 @@ SOIL_HATCH_MAP = {
 
     # Rock / lithology (examples)
     "Rock": "xx", "PWR": "xx", "RF": "++",
-    "CLAYSTONE": "x.", "SANDY CLAYSTONE": "///", "SILTY CLAYSTONE": "+++",
+    "CLAYSTONE": "x.x.", "SANDY CLAYSTONE": "///", "SILTY CLAYSTONE": "++",
     "SILTSTONE": "...", "SANDY SILTSTONE": "///",
     "CONGLOMERATE": "OO",
     "SANDSTONE": "...", "CLAYEY SANDSTONE": "/./.", "SILTY SANDSTONE": ".-", 
