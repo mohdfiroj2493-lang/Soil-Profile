@@ -105,8 +105,8 @@ def build_matplotlib_profile_hatched(
     fig, ax = plt.subplots(figsize=figsize)
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(y_min, y_max)
-    ax.set_xlabel("Chainage along section (ft)", fontsize=18)
-    ax.set_ylabel("Elevation (ft)", fontsize=18)
+    ax.set_xlabel("Chainage along section (ft)", fontsize=16)
+    ax.set_ylabel("Elevation (ft)", fontsize=16)
     ax.tick_params(axis='both', labelsize=16)
     ax.grid(True, which="both", linewidth=0.5)
 
