@@ -197,7 +197,7 @@ def build_matplotlib_profile_hatched(
 
 ORDERED_SOIL_TYPES = [
     "Topsoil", "Water",
-    "SM", "SM-ML", "SM-SC", "SP-SM", "SP-SC", "SP", "SW",
+    "SM", "SM-ML", "SM-SC", "SP-SM", "SP", "SW",
     "SC", "SC-CL", "SC-SM", "SP-SC","SW-SM",
     "CL", "CL-ML", "CL-CH", "CH",
     "ML", "MH", "ML-CL", 
