@@ -110,7 +110,8 @@ def build_matplotlib_profile_hatched(
     ax.set_xlabel("Chainage along section (ft)", fontsize=16)
     ax.set_ylabel("Elevation (ft)", fontsize=16)
     ax.tick_params(axis='both', labelsize=16)
-    ax.grid(True, which="both", linewidth=0.5)
+    ax.set_axisbelow(True)
+    ax.grid(True, which="both", linewidth=0.5, zorder=0)
 
     used_types = set()
 
@@ -154,7 +155,8 @@ def build_matplotlib_profile_hatched(
                 facecolor=face,
                 edgecolor="black",
                 linewidth=1.2,
-                hatch=hatch
+                hatch=hatch,
+                zorder=2
             )
             ax.add_patch(rect)
 
@@ -796,7 +798,7 @@ def build_plotly_profile(
     label_font = max(inner_font + 2, 12)
 
     grid_lines: List[dict] = []
-    soil_rects: List[dict] = []
+    soil_polygons: List[dict] = []
     annotations = []
     used_types = set()
 
@@ -865,11 +867,13 @@ def build_plotly_profile(
             color = SOIL_COLOR_MAP.get(soil, "#cccccc")
             used_types.add(soil)
 
-            # Rectangle for the soil layer
-            soil_rects.append(dict(
-                type="rect", x0=x - half, x1=x + half, y0=et, y1=ef,
-                line=dict(color="#000", width=1.3),
-                fillcolor=color, layer="below",
+            # Filled soil layer polygon. Using Scatter fill is more reliable in Streamlit/Plotly
+            # than layout shapes, which can sometimes render only the outlines.
+            soil_polygons.append(dict(
+                x=[x - half, x + half, x + half, x - half, x - half],
+                y=[et, et, ef, ef, et],
+                soil=soil,
+                color=color,
             ))
 
             mid_y = (ef + et) / 2.0
@@ -929,7 +933,29 @@ def build_plotly_profile(
     legend_types = ordered_present + extra_present
 
     fig = go.Figure()
+
+    # Draw actual filled profile columns first.
+    legend_shown = set()
+    for poly in soil_polygons:
+        soil = poly["soil"]
+        show_leg = soil not in legend_shown
+        legend_shown.add(soil)
+        fig.add_trace(go.Scatter(
+            x=poly["x"], y=poly["y"],
+            mode="lines",
+            fill="toself",
+            fillcolor=poly["color"],
+            line=dict(color="#000", width=1.3),
+            name=soil,
+            legendgroup=soil,
+            showlegend=show_leg,
+            hoverinfo="skip",
+        ))
+
+    # Keep legend order by adding invisible entries only for any missing present soil types.
     for soil in legend_types:
+        if soil in legend_shown:
+            continue
         fig.add_trace(go.Scatter(
             x=[None], y=[None], mode="markers",
             marker=dict(size=12, color=SOIL_COLOR_MAP.get(soil, "#cccccc")),
@@ -949,7 +975,7 @@ def build_plotly_profile(
         font=dict(family="Inter, Arial, sans-serif"),
         xaxis=dict(title=dict(text="Chainage along section (ft)", font=dict(color="black", size=14))),
         yaxis=dict(title=dict(text="Elevation (ft)", font=dict(color="black", size=14))),
-        shapes=grid_lines + soil_rects,
+        shapes=grid_lines,
         annotations=annotations,
         height=fig_height_px,
         margin=dict(l=70, r=260, t=70, b=70),
