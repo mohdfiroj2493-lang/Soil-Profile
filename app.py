@@ -103,8 +103,15 @@ def build_matplotlib_profile_hatched(
     half = width / 2.0
 
     xs = list(x_positions.values())
-    xmin = (min(xs) - half) if xs else -half
-    xmax = (max(xs) + 3 * half) if xs else half
+    # Add extra x-axis space so soil-code/lab labels beside the first and last
+    # boreholes do not get clipped by the plot boundary.
+    if xs:
+        x_range = max(xs) - min(xs) if len(xs) > 1 else width
+        x_label_pad = max(250.0, 4.0 * width, 0.06 * max(1.0, x_range))
+        xmin = min(0.0, min(xs) - half - x_label_pad)
+        xmax = max(xs) + half + x_label_pad
+    else:
+        xmin, xmax = -250.0, 250.0
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.set_xlim(xmin, xmax)
@@ -719,8 +726,15 @@ def build_plotly_profile(
     half = width / 2.0
 
     xs = list(x_positions.values())
-    xmin = (min(xs) - half) if xs else -half
-    xmax = (max(xs) + 3 * half) if xs else half
+    # Add extra x-axis space so soil-code/lab labels beside the first and last
+    # boreholes do not get clipped by the plot boundary.
+    if xs:
+        x_range = max(xs) - min(xs) if len(xs) > 1 else width
+        x_label_pad = max(250.0, 4.0 * width, 0.06 * max(1.0, x_range))
+        xmin = min(0.0, min(xs) - half - x_label_pad)
+        xmax = max(xs) + half + x_label_pad
+    else:
+        xmin, xmax = -250.0, 250.0
 
     # Adaptive label sizes depending on width
     def inner_font_for(w):
