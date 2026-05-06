@@ -875,14 +875,8 @@ def build_plotly_profile(
             name="Water Table",
             hovertemplate="Water Elev: %{y:.2f} ft<extra></extra>"
         ))
-    if lab_marker_x:
-        fig.add_trace(go.Scatter(
-            x=lab_marker_x, y=lab_marker_y, mode="markers",
-            marker=dict(symbol="circle-open", size=7, color="#111"),
-            name="Lab/SPT sample",
-            text=lab_hover,
-            hovertemplate="%{text}<extra></extra>"
-        ))
+    # Lab/SPT values are shown as text labels only.
+    # Do not add sample point markers, so no open circles appear before labels.
     
     # ✅ ALWAYS apply layout (even if no water table exists)
     fig.update_layout(
