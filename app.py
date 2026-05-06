@@ -379,8 +379,14 @@ def load_multisheet_existing(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
         df["Longitude"] = pd.to_numeric(df["Longitude"], errors="coerce")
         df = df.dropna(subset=["Latitude", "Longitude"]).copy()
 
-        # Compute average SPT labels (N-values)
-        df["SPT_Label"] = df.get("SPT", pd.NA).apply(compute_spt_avg)
+        # Compute average SPT labels (N-values).
+        # Some borehole layer files do not contain an SPT column because
+        # SPT/lab data may be provided in a separate workbook. In that case,
+        # keep this blank instead of calling .apply() on pd.NA.
+        if "SPT" in df.columns:
+            df["SPT_Label"] = df["SPT"].apply(compute_spt_avg)
+        else:
+            df["SPT_Label"] = ""
 
         # 🟡 Normalize soil names: extract only parenthesized soil codes.
         # If no code is present, only keep Topsoil; do not plot long descriptions
