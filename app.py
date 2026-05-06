@@ -174,7 +174,7 @@ def build_matplotlib_profile_hatched(
             lab_bore = lab_df[lab_df["Borehole"].astype(str) == str(bh)].dropna(subset=["Sample_Elev"])
             lab_offset = max(4.0, half * 0.15)
             for _, lab in lab_bore.iterrows():
-                label = format_lab_label(lab, show_spt=show_spt, show_wc=show_wc, show_duw=show_duw, show_ucs=show_ucs, sep="\n")
+                label = format_lab_label(lab, show_spt=show_spt, show_wc=show_wc, show_duw=show_duw, show_ucs=show_ucs, sep="; ", style="mathtext")
                 if not label:
                     continue
                 y = float(lab["Sample_Elev"])
@@ -260,17 +260,28 @@ def _fmt_num(value, decimals=1):
         return str(int(round(value)))
     return f"{value:.{decimals}f}".rstrip("0").rstrip(".")
 
-def format_lab_label(row, show_spt=True, show_wc=False, show_duw=False, show_ucs=False, sep="\n"):
-    """Build the label shown at each SPT/lab sample depth."""
+def format_lab_label(row, show_spt=True, show_wc=False, show_duw=False, show_ucs=False, sep="; ", style="plain"):
+    """Build one compact label shown at each SPT/lab sample depth."""
     parts = []
+
+    if style == "html":
+        gamma_d = "γ<sub>d</sub>"
+        q_u = "q<sub>u</sub>"
+    elif style == "mathtext":
+        gamma_d = r"$\gamma_d$"
+        q_u = r"$q_u$"
+    else:
+        gamma_d = "γd"
+        q_u = "qu"
+
     if show_spt and "SPT" in row and pd.notna(row.get("SPT")):
         parts.append(f"N={_fmt_num(row.get('SPT'))}")
     if show_wc and "Water_Content" in row and pd.notna(row.get("Water_Content")):
         parts.append(f"w={_fmt_num(row.get('Water_Content'))}%")
     if show_duw and "Dry_Unit_Weight" in row and pd.notna(row.get("Dry_Unit_Weight")):
-        parts.append(f"Dry={_fmt_num(row.get('Dry_Unit_Weight'))} pcf")
+        parts.append(f"{gamma_d}={_fmt_num(row.get('Dry_Unit_Weight'))}pcf")
     if show_ucs and "UCS" in row and pd.notna(row.get("UCS")):
-        parts.append(f"UCS={_fmt_num(row.get('UCS'), 2)} tsf")
+        parts.append(f"{q_u}={_fmt_num(row.get('UCS'), 2)}tsf")
     return sep.join(parts)
 
 @st.cache_data(show_spinner=False)
@@ -827,7 +838,7 @@ def build_plotly_profile(
             lab_bore = lab_df[lab_df["Borehole"].astype(str) == str(bh)].dropna(subset=["Sample_Elev"])
             lab_offset = max(4.0, half * 0.15)
             for _, lab in lab_bore.iterrows():
-                label = format_lab_label(lab, show_spt=show_spt, show_wc=show_wc, show_duw=show_duw, show_ucs=show_ucs, sep="<br>")
+                label = format_lab_label(lab, show_spt=show_spt, show_wc=show_wc, show_duw=show_duw, show_ucs=show_ucs, sep="; ", style="html")
                 if not label:
                     continue
                 y = float(lab["Sample_Elev"])
