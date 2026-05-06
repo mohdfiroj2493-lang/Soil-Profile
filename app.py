@@ -133,7 +133,7 @@ def build_matplotlib_profile_hatched(
 
         x = x_positions[bh]
         top_el = float(bore["Elevation_From"].max())
-        ax.text(x, top_el + 3, bh, ha="center", va="bottom", fontsize=10, fontweight="bold")
+        ax.text(x, top_el + 1.0, bh, ha="center", va="bottom", fontsize=10, fontweight="bold")
 
         # Water table (optional)
         if "Water_Elev" in bore.columns:
@@ -802,7 +802,7 @@ def build_plotly_profile(
         x = x_positions[bh]
         top_el = bore["Elevation_From"].max()
         annotations.append(dict(
-            x=x, y=top_el + 3, text=bh, showarrow=False,
+            x=x, y=top_el + 1.0, text=bh, showarrow=False,
             xanchor="center", yanchor="bottom",
             font=dict(size=bh_font, family="Arial Black", color="#111")
         ))
