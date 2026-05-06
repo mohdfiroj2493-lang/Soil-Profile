@@ -148,17 +148,25 @@ def build_matplotlib_profile_hatched(
             face = SOIL_COLOR_MAP.get(soil, "#cccccc")
             hatch = SOIL_HATCH_MAP.get(soil, "////")  # default hatch if unknown
 
-            rect = mpatches.Rectangle(
-                (x - half, et),            # (x0, y0)
-                width,                     # w
-                (ef - et),                 # h
-                facecolor=face,
-                edgecolor="black",
-                linewidth=1.2,
-                hatch=hatch,
-                zorder=2
-            )
-            ax.add_patch(rect)
+            # Draw the full soil layer as a vertical bar.  This is more reliable
+            # in Streamlit/Matplotlib than adding raw Rectangle patches; it keeps
+            # the old colored/hatched profile-column appearance.
+            layer_height = ef - et
+            if layer_height > 0:
+                ax.bar(
+                    x,
+                    layer_height,
+                    bottom=et,
+                    width=width,
+                    align="center",
+                    color=face,
+                    edgecolor="black",
+                    linewidth=1.2,
+                    hatch=hatch,
+                    zorder=3,
+                )
+            else:
+                ax.plot([x - half, x + half], [ef, ef], color="black", linewidth=1.2, zorder=3)
 
             mid_y = (ef + et) / 2.0
             offset = max(4.0, half * 0.15)
@@ -942,7 +950,7 @@ def build_plotly_profile(
         legend_shown.add(soil)
         fig.add_trace(go.Scatter(
             x=poly["x"], y=poly["y"],
-            mode="lines",
+            mode="none",
             fill="toself",
             fillcolor=poly["color"],
             line=dict(color="#000", width=1.3),
