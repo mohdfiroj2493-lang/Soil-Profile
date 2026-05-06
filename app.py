@@ -90,6 +90,8 @@ def build_matplotlib_profile_hatched(
     column_width: Optional[float],
     show_codes: bool = False,
     show_spt: bool = True,
+    show_lab: bool = True,
+    lab_df: Optional[pd.DataFrame] = None,
     figsize: Tuple[float, float] = (18, 10),
 ):
     """
@@ -163,12 +165,23 @@ def build_matplotlib_profile_hatched(
             if show_codes:
                 ax.text(x - half - offset, mid_y, soil, ha="right", va="center", fontsize=9)
 
-            # SPT outside RIGHT
-            if show_spt:
+            # Backward-compatible SPT labels from the layer workbook when no separate lab file is loaded.
+            if show_spt and (lab_df is None or lab_df.empty):
                 spt_val = r.get("SPT_Label", "")
                 spt = "" if pd.isna(spt_val) else str(spt_val)
                 if spt not in ("", "nan"):
-                    ax.text(x + half + offset, mid_y, spt, ha="left", va="center", fontsize=9)
+                    ax.text(x + half + offset, mid_y, f"N={spt}", ha="left", va="center", fontsize=9)
+
+        # Separate lab/SPT samples plotted at their actual sample elevations.
+        if lab_df is not None and not lab_df.empty:
+            lab_bore = lab_df[lab_df["Borehole"] == bh].sort_values("Depth_ft")
+            for _, lab_row in lab_bore.iterrows():
+                label = build_lab_label(lab_row, show_spt=show_spt, show_lab=show_lab, html=False)
+                if not label:
+                    continue
+                y = float(lab_row["Elevation"])
+                ax.plot([x + half, x + half + offset * 0.7], [y, y], color="black", linewidth=0.8)
+                ax.text(x + half + offset, y, label, ha="left", va="center", fontsize=8)
 
     if water_x:
         ax.scatter(water_x, water_y, marker="v", s=70)
@@ -257,8 +270,12 @@ def load_multisheet_existing(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
         df["Longitude"] = pd.to_numeric(df["Longitude"], errors="coerce")
         df = df.dropna(subset=["Latitude", "Longitude"]).copy()
 
-        # Compute average SPT labels (N-values)
-        df["SPT_Label"] = df.get("SPT", pd.NA).apply(compute_spt_avg)
+        # Compute average SPT labels (N-values) when present in legacy bore-log workbooks.
+        # Newer workflows can keep all SPT/lab values in the separate Lab/SPT workbook.
+        if "SPT" in df.columns:
+            df["SPT_Label"] = df["SPT"].apply(compute_spt_avg)
+        else:
+            df["SPT_Label"] = ""
 
         # 🟡 Normalize soil names: extract codes in parentheses or detect Topsoil
         soil_col = None
@@ -312,6 +329,126 @@ def load_proposed_multisheet(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
             df_norm["Color"] = PROPOSED_TEXT_COLORS[i % len(PROPOSED_TEXT_COLORS)]
             result[sheet] = df_norm
     return result
+
+
+# ── Lab / SPT test helpers ───────────────────────────────────────────────────
+def _clean_key(value) -> str:
+    """Normalize Excel column names so minor spacing differences do not break loading."""
+    return "".join(ch for ch in str(value).strip().lower() if ch.isalnum())
+
+
+def _first_matching_column(columns, aliases):
+    clean_to_original = {_clean_key(c): c for c in columns}
+    for alias in aliases:
+        hit = clean_to_original.get(_clean_key(alias))
+        if hit is not None:
+            return hit
+    return None
+
+
+def _format_number(value, digits=2):
+    if value is None or pd.isna(value):
+        return ""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return str(value).strip()
+    if math.isfinite(f) and f.is_integer():
+        return str(int(f))
+    return f"{f:.{digits}f}".rstrip("0").rstrip(".")
+
+
+def _format_spt_label(value):
+    if value is None or pd.isna(value):
+        return ""
+    s = str(value).strip()
+    if s == "" or s.upper() in {"N/A", "NA", "NAN", "NONE"}:
+        return ""
+    return _format_number(value, digits=2)
+
+
+@st.cache_data(show_spinner=False)
+def load_lab_tests(uploaded_bytes: bytes) -> pd.DataFrame:
+    """
+    Load the separate LAB/SPT workbook.
+    Expected fields include Bore Log, Depth (ft), SPT N, Water Content (%),
+    Dry Unit Weight (pcf), and UCS (tsf). Extra sheets/columns are allowed.
+    """
+    all_sheets = pd.read_excel(io.BytesIO(uploaded_bytes), sheet_name=None)
+    frames = []
+
+    for sheet, raw in all_sheets.items():
+        if raw.empty:
+            continue
+
+        df_lab = raw.copy()
+        df_lab.columns = [str(c).strip() for c in df_lab.columns]
+
+        bore_col = _first_matching_column(df_lab.columns, ["Bore Log", "Borehole", "Bore", "Boring", "BH"])
+        depth_col = _first_matching_column(df_lab.columns, ["Depth (ft)", "Depth", "Sample Depth", "Depth ft"])
+        spt_col = _first_matching_column(df_lab.columns, ["SPT N", "SPT N ", "SPT", "N Value", "N-Value", "SPT N-Value"])
+        wc_col = _first_matching_column(df_lab.columns, ["Water Content (%)", "Water Content (%) ", "Water Content", "Moisture Content", "w (%)"])
+        dry_col = _first_matching_column(df_lab.columns, ["Dry Unit Weight (pcf)", "Dry Unit Weight", "Dry Density", "Unit Weight"])
+        ucs_col = _first_matching_column(df_lab.columns, ["UCS (tsf)", "UCS", "Unconfined Compressive Strength", "Qu"])
+
+        if bore_col is None or depth_col is None:
+            continue
+
+        out = pd.DataFrame({
+            "Borehole": df_lab[bore_col].astype(str).str.strip(),
+            "Depth_ft": pd.to_numeric(df_lab[depth_col], errors="coerce"),
+            "SPT_Label": df_lab[spt_col].apply(_format_spt_label) if spt_col else "",
+            "Water_Content": pd.to_numeric(df_lab[wc_col], errors="coerce") if wc_col else pd.NA,
+            "Dry_Unit_Weight": pd.to_numeric(df_lab[dry_col], errors="coerce") if dry_col else pd.NA,
+            "UCS": pd.to_numeric(df_lab[ucs_col], errors="coerce") if ucs_col else pd.NA,
+            "Lab_Sheet": sheet,
+        })
+        out = out.dropna(subset=["Depth_ft"])
+        out = out[out["Borehole"].ne("") & out["Borehole"].str.lower().ne("nan")]
+        if not out.empty:
+            frames.append(out)
+
+    if not frames:
+        return pd.DataFrame(columns=["Borehole", "Depth_ft", "Elevation", "SPT_Label", "Water_Content", "Dry_Unit_Weight", "UCS", "Lab_Sheet"])
+
+    return pd.concat(frames, ignore_index=True)
+
+
+def attach_lab_elevations(lab_df: pd.DataFrame, borehole_df: pd.DataFrame) -> pd.DataFrame:
+    """Add sample elevation to lab tests using top elevation from the bore-log workbook."""
+    if lab_df is None or lab_df.empty or borehole_df.empty:
+        return pd.DataFrame(columns=["Borehole", "Depth_ft", "Elevation", "SPT_Label", "Water_Content", "Dry_Unit_Weight", "UCS", "Lab_Sheet"])
+
+    top = (
+        borehole_df.groupby("Borehole", as_index=False)["Elevation_From"]
+        .max()
+        .rename(columns={"Elevation_From": "Top_Elevation"})
+    )
+    lab = lab_df.copy()
+    lab = lab.merge(top, on="Borehole", how="left")
+    lab["Elevation"] = pd.to_numeric(lab["Top_Elevation"], errors="coerce") - pd.to_numeric(lab["Depth_ft"], errors="coerce")
+    return lab.dropna(subset=["Elevation"])
+
+
+def build_lab_label(row, show_spt=True, show_lab=True, html=False) -> str:
+    """Build compact labels for profile annotations."""
+    parts = []
+    if show_spt:
+        spt = row.get("SPT_Label", "")
+        if not pd.isna(spt) and str(spt).strip() not in ("", "nan"):
+            parts.append(f"N={str(spt).strip()}")
+    if show_lab:
+        wc = _format_number(row.get("Water_Content"), digits=1)
+        duw = _format_number(row.get("Dry_Unit_Weight"), digits=1)
+        ucs = _format_number(row.get("UCS"), digits=2)
+        if wc:
+            parts.append(f"w={wc}%")
+        if duw:
+            parts.append(f"γd={duw} pcf")
+        if ucs:
+            parts.append(f"UCS={ucs} tsf")
+    sep = "<br>" if html else "\n"
+    return sep.join(parts)
 
 # ── Geometry helpers ────────────────────────────────────────────────────────
 def chainage_and_offset_ft(line: LineString, lat: float, lon: float):
@@ -375,6 +512,7 @@ st.sidebar.header("Upload Files")
 
 main_file = st.sidebar.file_uploader("MAIN borehole Excel (multi-sheet OK)", type=["xlsx", "xls"])
 prop_file = st.sidebar.file_uploader("Optional PROPOSED.xlsx (multi-sheet OK)", type=["xlsx", "xls"])
+lab_file = st.sidebar.file_uploader("Optional LAB/SPT test Excel", type=["xlsx", "xls"])
 
 if main_file is None:
     st.title("Map with Bore Logs")
@@ -408,6 +546,17 @@ if prop_file is not None:
     except Exception as e:
         st.warning(f"Could not read Proposed workbook: {e}")
         proposed_dict = {}
+
+# ── Load optional LAB/SPT test data ─────────────────────────────────────────
+lab_tests_raw = pd.DataFrame()
+if lab_file is not None:
+    try:
+        lab_tests_raw = load_lab_tests(lab_file.getvalue())
+        if lab_tests_raw.empty:
+            st.warning("Lab/SPT workbook was read, but no valid Bore Log + Depth rows were found.")
+    except Exception as e:
+        st.warning(f"Could not read Lab/SPT workbook: {e}")
+        lab_tests_raw = pd.DataFrame()
 
 # ── Map Display ─────────────────────────────────────────────────────────────
 st.title("Map with Bore Logs")
@@ -479,11 +628,13 @@ if maybe_line is not None:
 st.title("Section / Profile (ft) — Soil")
 corridor_ft = st.slider("Corridor width (ft)", 0, 1000, 200, 10)
 
-colA, colB = st.columns([1, 1])
+colA, colB, colC = st.columns([1, 1, 1])
 with colA:
     show_codes = st.checkbox("Show soil code (ML/SM/...)", value=False)
 with colB:
     show_spt = st.checkbox("Show SPT N value", value=True)
+with colC:
+    show_lab = st.checkbox("Show lab test values", value=True)
 
 if not st.session_state["section_line_coords"]:
     st.info("Draw a polyline on the map (double-click to finish). The profiles will appear below automatically.")
@@ -547,6 +698,8 @@ def build_plotly_profile(
     y_min: float, y_max: float, title: str,
     column_width: Optional[float],
     show_codes: bool = False, show_spt: bool = True,
+    show_lab: bool = True,
+    lab_df: Optional[pd.DataFrame] = None,
     fig_height_px: int = 1000,
 ) -> go.Figure:
     # Width is either manual (passed) or auto from spacing
@@ -668,16 +821,39 @@ def build_plotly_profile(
                     font=dict(size=label_font, family="Arial", color="#111"),
                 ))
 
-            # SPT value OUTSIDE on the RIGHT (just the number)
-            if show_spt and spt not in ("", "nan"):
+            # Backward-compatible SPT labels from the layer workbook when no separate lab file is loaded.
+            if show_spt and (lab_df is None or lab_df.empty) and spt not in ("", "nan"):
                 annotations.append(dict(
                     x=x + half + offset,
                     y=mid_y,
-                    text=spt,
+                    text=f"N={spt}",
                     showarrow=False,
                     xanchor="left",
                     yanchor="middle",
                     font=dict(size=label_font, family="Arial", color="#111"),
+                ))
+
+        # Separate lab/SPT samples plotted at their actual sample elevations.
+        if lab_df is not None and not lab_df.empty:
+            lab_bore = lab_df[lab_df["Borehole"] == bh].sort_values("Depth_ft")
+            for _, lab_row in lab_bore.iterrows():
+                label = build_lab_label(lab_row, show_spt=show_spt, show_lab=show_lab, html=True)
+                if not label:
+                    continue
+                y = float(lab_row["Elevation"])
+                annotations.append(dict(
+                    x=x + half + offset,
+                    y=y,
+                    text=label,
+                    showarrow=True,
+                    ax=18,
+                    ay=0,
+                    xanchor="left",
+                    yanchor="middle",
+                    font=dict(size=max(label_font - 2, 10), family="Arial", color="#111"),
+                    arrowhead=0,
+                    arrowwidth=1,
+                    arrowcolor="#111",
                 ))
 
     # Legend (preferred order first, then extras)
@@ -720,6 +896,10 @@ def build_plotly_profile(
 
 # ── Generate 2D profile ─────────────────────────────────────────────────────
 plot_df = df[df["Borehole"].isin(ordered_bhs)]
+lab_plot_df = attach_lab_elevations(lab_tests_raw, plot_df)
+lab_plot_df = lab_plot_df[lab_plot_df["Borehole"].isin(ordered_bhs)] if not lab_plot_df.empty else lab_plot_df
+if lab_file is not None and not lab_plot_df.empty:
+    st.caption(f"Loaded **{len(lab_plot_df)}** lab/SPT sample rows for the selected boreholes. Labels are plotted at Top Elevation − Depth.")
 ymin_auto, ymax_auto = auto_y_limits(plot_df)
 fig_height_px = int(FIG_HEIGHT_IN * 50)
 
@@ -737,7 +917,7 @@ fig2d = build_plotly_profile(
     df=plot_df, ordered_bhs=ordered_bhs, x_positions=xpos,
     y_min=ymin_auto, y_max=ymax_auto, title=TITLE_DEFAULT,
     column_width=column_width_ft, show_codes=show_codes, show_spt=show_spt,
-    fig_height_px=fig_height_px
+    show_lab=show_lab, lab_df=lab_plot_df, fig_height_px=fig_height_px
 )
 st.plotly_chart(
     fig2d, use_container_width=True,
@@ -757,6 +937,8 @@ fig_hatched = build_matplotlib_profile_hatched(
     column_width=column_width_ft,   # uses same width logic as Plotly
     show_codes=show_codes,
     show_spt=show_spt,
+    show_lab=show_lab,
+    lab_df=lab_plot_df,
     figsize=(18, 10)
 )
 
