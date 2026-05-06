@@ -977,8 +977,8 @@ fig_hatched = build_matplotlib_profile_hatched(
     figsize=(profile_fig_width, profile_fig_height)
 )
 
-st.pyplot(fig_hatched, clear_figure=True)
-
+# Save/export BEFORE displaying. Streamlit can clear the Matplotlib figure after display;
+# saving after clear_figure=True can create blank PNG/SVG/PDF files.
 # High-quality exports for reports. PNG is 600 dpi; SVG/PDF are vector.
 png_buf = io.BytesIO()
 fig_hatched.savefig(png_buf, format="png", dpi=MATPLOTLIB_EXPORT_DPI, bbox_inches="tight", facecolor="white")
@@ -989,6 +989,8 @@ svg_buf.seek(0)
 pdf_buf = io.BytesIO()
 fig_hatched.savefig(pdf_buf, format="pdf", bbox_inches="tight", facecolor="white")
 pdf_buf.seek(0)
+
+st.pyplot(fig_hatched, clear_figure=True)
 
 dl1, dl2, dl3 = st.columns(3)
 with dl1:
