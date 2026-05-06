@@ -33,6 +33,12 @@ CIRCLE_RADIUS_PX, CIRCLE_STROKE, CIRCLE_STROKE_W = 10, "#ffffff", 1
 CIRCLE_FILL_OPACITY, LABEL_DX_PX, LABEL_DY_PX = 0.95, 8, -10
 TITLE_DEFAULT = "Soil Profile"
 FIG_HEIGHT_IN = 22.0
+# Higher DPI for the Matplotlib hatched profile display/export
+MATPLOTLIB_DISPLAY_DPI = 220
+MATPLOTLIB_EXPORT_DPI = 600
+
+plt.rcParams["figure.dpi"] = MATPLOTLIB_DISPLAY_DPI
+plt.rcParams["savefig.dpi"] = MATPLOTLIB_EXPORT_DPI
 
 # ── Soil color map and renaming rules ────────────────────────────────────────
 SOIL_COLOR_MAP = {
@@ -113,13 +119,15 @@ def build_matplotlib_profile_hatched(
     else:
         xmin, xmax = -250.0, 250.0
 
-    fig, ax = plt.subplots(figsize=figsize)
+    fig, ax = plt.subplots(figsize=figsize, dpi=MATPLOTLIB_DISPLAY_DPI)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(y_min, y_max)
     ax.set_xlabel("Chainage along section (ft)", fontsize=16)
     ax.set_ylabel("Elevation (ft)", fontsize=16)
     ax.tick_params(axis='both', labelsize=16)
-    ax.grid(True, which="both", linewidth=0.5)
+    ax.grid(True, which="both", linewidth=0.6, alpha=0.65)
 
     used_types = set()
 
@@ -163,7 +171,7 @@ def build_matplotlib_profile_hatched(
                 (ef - et),                 # h
                 facecolor=face,
                 edgecolor="black",
-                linewidth=1.2,
+                linewidth=1.3,
                 hatch=hatch
             )
             ax.add_patch(rect)
@@ -947,7 +955,11 @@ st.plotly_chart(
 
 st.markdown("### Soil Profile")
 
-# You can control figure size based on number of boreholes if you want:
+# Larger figure + higher DPI improves the on-screen profile quality.
+# Width grows with the number of boreholes so labels stay readable.
+profile_fig_width = max(18.0, min(34.0, 4.0 + 2.4 * max(1, len(ordered_bhs))))
+profile_fig_height = 11.0
+
 fig_hatched = build_matplotlib_profile_hatched(
     df=plot_df,
     ordered_bhs=ordered_bhs,
@@ -962,10 +974,29 @@ fig_hatched = build_matplotlib_profile_hatched(
     show_wc=show_wc,
     show_duw=show_duw,
     show_ucs=show_ucs,
-    figsize=(18, 10)
+    figsize=(profile_fig_width, profile_fig_height)
 )
 
 st.pyplot(fig_hatched, clear_figure=True)
+
+# High-quality exports for reports. PNG is 600 dpi; SVG/PDF are vector.
+png_buf = io.BytesIO()
+fig_hatched.savefig(png_buf, format="png", dpi=MATPLOTLIB_EXPORT_DPI, bbox_inches="tight", facecolor="white")
+png_buf.seek(0)
+svg_buf = io.BytesIO()
+fig_hatched.savefig(svg_buf, format="svg", bbox_inches="tight", facecolor="white")
+svg_buf.seek(0)
+pdf_buf = io.BytesIO()
+fig_hatched.savefig(pdf_buf, format="pdf", bbox_inches="tight", facecolor="white")
+pdf_buf.seek(0)
+
+dl1, dl2, dl3 = st.columns(3)
+with dl1:
+    st.download_button("Download high-quality PNG", png_buf, file_name="soil_profile_hatched_600dpi.png", mime="image/png")
+with dl2:
+    st.download_button("Download vector SVG", svg_buf, file_name="soil_profile_hatched.svg", mime="image/svg+xml")
+with dl3:
+    st.download_button("Download vector PDF", pdf_buf, file_name="soil_profile_hatched.pdf", mime="application/pdf")
 
 
 # ── 3D profile (PLAN COORDS) builder ────────────────────────────────────────
