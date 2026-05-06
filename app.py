@@ -174,7 +174,8 @@ def build_matplotlib_profile_hatched(
 
         # Separate lab/SPT samples plotted at their actual sample elevations.
         if lab_df is not None and not lab_df.empty:
-            lab_bore = lab_df[lab_df["Borehole"] == bh].sort_values("Depth_ft")
+            bh_key = normalize_borehole_id(bh)
+            lab_bore = lab_df[lab_df.get("Borehole_Key", lab_df["Borehole"].apply(normalize_borehole_id)) == bh_key].sort_values("Depth_ft")
             for _, lab_row in lab_bore.iterrows():
                 label = build_lab_label(lab_row, show_spt=show_spt, show_lab=show_lab, html=False)
                 if not label:
@@ -231,10 +232,10 @@ RENAME_MAP = {
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def compute_spt_avg(value):
     """Return ONLY the numeric average SPT value (e.g., 9.2) or '' if not valid."""
-    if value is None:
+    if value is None or pd.isna(value):
         return ""
     s = str(value).strip()
-    if s.upper() == "N/A" or s == "":
+    if s.upper() in {"N/A", "NA", "NAN", "NONE", ""}:
         return ""
     nums = []
     for x in s.split(","):
@@ -243,6 +244,56 @@ def compute_spt_avg(value):
         except ValueError:
             pass
     return round(sum(nums) / len(nums), 2) if nums else ""
+
+
+def normalize_borehole_id(value) -> str:
+    """Normalize borehole names for joining separate workbooks."""
+    if value is None or pd.isna(value):
+        return ""
+    text = str(value).strip().upper()
+    text = text.replace("–", "-").replace("—", "-").replace("−", "-")
+    text = " ".join(text.split())
+    return text
+
+
+def extract_soil_type(value) -> str:
+    """Return a compact soil/lithology code for coloring/profile plotting."""
+    if value is None or pd.isna(value):
+        return "Unknown"
+    text = str(value).strip()
+    upper = text.upper()
+
+    # Treat common surface/fill materials in a stable way instead of accidentally
+    # converting every non-parenthesis row to Topsoil.
+    if "TOPSOIL" in upper or "TOP SOIL" in upper:
+        return "Topsoil"
+
+    # Prefer the first recognized code in parentheses.
+    import re
+    matches = re.findall(r"\(([^)]+)\)", text)
+    for m in matches:
+        code = m.strip().upper()
+        if code in SOIL_COLOR_MAP or code in ORDERED_SOIL_TYPES:
+            return code
+        # Some descriptions include longer parenthetical text; pull a known code.
+        for known in sorted(ORDERED_SOIL_TYPES, key=len, reverse=True):
+            if known.upper() in code:
+                return known
+
+    # Fallback keyword search for rows without parentheses.
+    keyword_map = [
+        ("ASPHALT", "RF"), ("CONCRETE", "RF"), ("AGGREGATE", "GP"),
+        ("LIMESTONE", "LIMESTONE"), ("SANDSTONE", "SANDSTONE"),
+        ("SHALE", "SHALE"), ("SILTSTONE", "SILTSTONE"),
+        ("CLAYSTONE", "CLAYSTONE"), ("CHERT", "CHERT"),
+        ("FAT CLAY", "CH"), ("LEAN CLAY", "CL"), ("SILTY CLAY", "CL-ML"),
+        ("SANDY CLAY", "CL"), ("SILTY SAND", "SM"), ("CLAYEY SAND", "SC"),
+        ("GRAVEL", "GP"), ("SAND", "SP"), ("SILT", "ML"), ("CLAY", "CL"),
+    ]
+    for needle, code in keyword_map:
+        if needle in upper:
+            return code
+    return text if text else "Unknown"
 
 @st.cache_data(show_spinner=False)
 def load_multisheet_existing(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
@@ -263,12 +314,22 @@ def load_multisheet_existing(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
         df.columns = df.columns.str.strip()
         df.rename(columns=RENAME_MAP, inplace=True, errors="ignore")
 
-        # Ensure Latitude/Longitude columns exist and are numeric
-        if not {"Latitude", "Longitude"}.issubset(df.columns):
+        # Ensure Latitude/Longitude and borehole columns exist and are numeric where needed.
+        if not {"Latitude", "Longitude", "Borehole", "Elevation_From", "Elevation_To"}.issubset(df.columns):
             continue
         df["Latitude"] = pd.to_numeric(df["Latitude"], errors="coerce")
         df["Longitude"] = pd.to_numeric(df["Longitude"], errors="coerce")
-        df = df.dropna(subset=["Latitude", "Longitude"]).copy()
+        df["Elevation_From"] = pd.to_numeric(df["Elevation_From"], errors="coerce")
+        df["Elevation_To"] = pd.to_numeric(df["Elevation_To"], errors="coerce")
+        df["Borehole"] = df["Borehole"].astype(str).str.strip()
+        df["Borehole_Key"] = df["Borehole"].apply(normalize_borehole_id)
+        if "Top Elevation (ft)" in df.columns:
+            df["Top_Elevation"] = pd.to_numeric(df["Top Elevation (ft)"], errors="coerce")
+        else:
+            df["Top_Elevation"] = df.groupby("Borehole_Key")["Elevation_From"].transform("max")
+        if "Water_Elev" in df.columns:
+            df["Water_Elev"] = pd.to_numeric(df["Water_Elev"], errors="coerce")
+        df = df.dropna(subset=["Latitude", "Longitude", "Elevation_From", "Elevation_To"]).copy()
 
         # Compute average SPT labels (N-values) when present in legacy bore-log workbooks.
         # Newer workflows can keep all SPT/lab values in the separate Lab/SPT workbook.
@@ -277,18 +338,17 @@ def load_multisheet_existing(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
         else:
             df["SPT_Label"] = ""
 
-        # 🟡 Normalize soil names: extract codes in parentheses or detect Topsoil
+        # Robust soil-name normalization.
         soil_col = None
         for c in df.columns:
             if str(c).strip().lower() in ["soil_type", "soil layer description", "soil layer"]:
                 soil_col = c
                 break
         if soil_col:
-            df[soil_col] = df[soil_col].astype(str)
-            df[soil_col] = df[soil_col].str.extract(r"\((.*?)\)").fillna(
-                df[soil_col].str.replace(r"^.*top\s*soil.*$", "Topsoil", case=False, regex=True)
-            )
-            df.rename(columns={soil_col: "Soil_Type"}, inplace=True)
+            df["Soil_Type"] = df[soil_col].apply(extract_soil_type)
+        elif "Soil_Type" not in df.columns:
+            df["Soil_Type"] = "Unknown"
+
         # Assign metadata
         df["Sheet"] = sheet
         df["Color"] = EXISTING_TEXT_COLORS[i % len(EXISTING_TEXT_COLORS)]
@@ -403,13 +463,14 @@ def load_lab_tests(uploaded_bytes: bytes) -> pd.DataFrame:
             "UCS": pd.to_numeric(df_lab[ucs_col], errors="coerce") if ucs_col else pd.NA,
             "Lab_Sheet": sheet,
         })
+        out["Borehole_Key"] = out["Borehole"].apply(normalize_borehole_id)
         out = out.dropna(subset=["Depth_ft"])
-        out = out[out["Borehole"].ne("") & out["Borehole"].str.lower().ne("nan")]
+        out = out[out["Borehole_Key"].ne("") & out["Borehole_Key"].str.lower().ne("nan")]
         if not out.empty:
             frames.append(out)
 
     if not frames:
-        return pd.DataFrame(columns=["Borehole", "Depth_ft", "Elevation", "SPT_Label", "Water_Content", "Dry_Unit_Weight", "UCS", "Lab_Sheet"])
+        return pd.DataFrame(columns=["Borehole", "Borehole_Key", "Depth_ft", "Elevation", "SPT_Label", "Water_Content", "Dry_Unit_Weight", "UCS", "Lab_Sheet"])
 
     return pd.concat(frames, ignore_index=True)
 
@@ -417,15 +478,20 @@ def load_lab_tests(uploaded_bytes: bytes) -> pd.DataFrame:
 def attach_lab_elevations(lab_df: pd.DataFrame, borehole_df: pd.DataFrame) -> pd.DataFrame:
     """Add sample elevation to lab tests using top elevation from the bore-log workbook."""
     if lab_df is None or lab_df.empty or borehole_df.empty:
-        return pd.DataFrame(columns=["Borehole", "Depth_ft", "Elevation", "SPT_Label", "Water_Content", "Dry_Unit_Weight", "UCS", "Lab_Sheet"])
+        return pd.DataFrame(columns=["Borehole", "Borehole_Key", "Depth_ft", "Elevation", "SPT_Label", "Water_Content", "Dry_Unit_Weight", "UCS", "Lab_Sheet"])
 
+    bh = borehole_df.copy()
+    if "Borehole_Key" not in bh.columns:
+        bh["Borehole_Key"] = bh["Borehole"].apply(normalize_borehole_id)
     top = (
-        borehole_df.groupby("Borehole", as_index=False)["Elevation_From"]
+        bh.groupby("Borehole_Key", as_index=False)["Elevation_From"]
         .max()
         .rename(columns={"Elevation_From": "Top_Elevation"})
     )
     lab = lab_df.copy()
-    lab = lab.merge(top, on="Borehole", how="left")
+    if "Borehole_Key" not in lab.columns:
+        lab["Borehole_Key"] = lab["Borehole"].apply(normalize_borehole_id)
+    lab = lab.merge(top, on="Borehole_Key", how="left")
     lab["Elevation"] = pd.to_numeric(lab["Top_Elevation"], errors="coerce") - pd.to_numeric(lab["Depth_ft"], errors="coerce")
     return lab.dropna(subset=["Elevation"])
 
@@ -835,7 +901,8 @@ def build_plotly_profile(
 
         # Separate lab/SPT samples plotted at their actual sample elevations.
         if lab_df is not None and not lab_df.empty:
-            lab_bore = lab_df[lab_df["Borehole"] == bh].sort_values("Depth_ft")
+            bh_key = normalize_borehole_id(bh)
+            lab_bore = lab_df[lab_df.get("Borehole_Key", lab_df["Borehole"].apply(normalize_borehole_id)) == bh_key].sort_values("Depth_ft")
             for _, lab_row in lab_bore.iterrows():
                 label = build_lab_label(lab_row, show_spt=show_spt, show_lab=show_lab, html=True)
                 if not label:
@@ -897,10 +964,19 @@ def build_plotly_profile(
 # ── Generate 2D profile ─────────────────────────────────────────────────────
 plot_df = df[df["Borehole"].isin(ordered_bhs)]
 lab_plot_df = attach_lab_elevations(lab_tests_raw, plot_df)
-lab_plot_df = lab_plot_df[lab_plot_df["Borehole"].isin(ordered_bhs)] if not lab_plot_df.empty else lab_plot_df
-if lab_file is not None and not lab_plot_df.empty:
-    st.caption(f"Loaded **{len(lab_plot_df)}** lab/SPT sample rows for the selected boreholes. Labels are plotted at Top Elevation − Depth.")
+ordered_keys = {normalize_borehole_id(bh) for bh in ordered_bhs}
+lab_plot_df = lab_plot_df[lab_plot_df["Borehole_Key"].isin(ordered_keys)] if not lab_plot_df.empty else lab_plot_df
+if lab_file is not None:
+    if not lab_plot_df.empty:
+        st.caption(f"Loaded **{len(lab_plot_df)}** lab/SPT sample rows for the selected boreholes. Labels are plotted at Top Elevation − Depth.")
+    else:
+        st.warning("No Lab/SPT rows matched the selected boreholes. Check that Bore Log names match between the bore-log and Lab Test workbooks.")
 ymin_auto, ymax_auto = auto_y_limits(plot_df)
+if lab_plot_df is not None and not lab_plot_df.empty:
+    lab_y = pd.to_numeric(lab_plot_df["Elevation"], errors="coerce").dropna()
+    if not lab_y.empty:
+        ymin_auto = min(ymin_auto, float(lab_y.min()) - 2.0)
+        ymax_auto = max(ymax_auto, float(lab_y.max()) + 2.0)
 fig_height_px = int(FIG_HEIGHT_IN * 50)
 
 suggested = dynamic_column_width(xpos)
