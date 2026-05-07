@@ -1010,7 +1010,7 @@ def build_lab_property_matplotlib(
     title: str,
     y_min: float,
     y_max: float,
-    figsize: Tuple[float, float] = (5.6, 4.2),
+    figsize: Tuple[float, float] = (5.6, 6.2),
 ):
     """Matplotlib scatter plot of one lab/SPT property against elevation."""
     fig, ax = plt.subplots(figsize=figsize, dpi=160)
@@ -1039,8 +1039,9 @@ def build_lab_property_matplotlib(
             )
             plotted = True
 
-    ax.set_title(title, fontsize=12, fontweight="bold")
-    ax.set_xlabel(x_title, fontsize=11)
+    ax.set_title(title, fontsize=12, fontweight="bold", pad=28)
+    ax.set_xlabel(x_title, fontsize=11, labelpad=8)
+    ax.xaxis.set_label_position("top")
     ax.set_ylabel("Elevation (ft)", fontsize=11)
     ax.set_ylim(y_min, y_max)
     ax.grid(True, which="both", linewidth=0.5, alpha=0.45)
