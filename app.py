@@ -1001,6 +1001,107 @@ with dl3:
     st.download_button("Download vector PDF", pdf_buf, file_name="soil_profile_hatched.pdf", mime="application/pdf")
 
 
+# ── Lab/SPT property plots for selected boreholes in the drawn section ───────
+def build_lab_property_figure(
+    lab_data: pd.DataFrame,
+    boreholes: List[str],
+    value_col: str,
+    x_title: str,
+    title: str,
+    y_min: float,
+    y_max: float,
+) -> go.Figure:
+    """Plot one lab/SPT property against elevation for boreholes in the section."""
+    fig = go.Figure()
+
+    if lab_data is None or lab_data.empty or value_col not in lab_data.columns:
+        fig.update_layout(title=title, height=430)
+        return fig
+
+    for bh in boreholes:
+        d = lab_data[lab_data["Borehole"].astype(str) == str(bh)].copy()
+        d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
+        d["Sample_Elev"] = pd.to_numeric(d["Sample_Elev"], errors="coerce")
+        d = d.dropna(subset=[value_col, "Sample_Elev"]).sort_values("Sample_Elev", ascending=False)
+        if d.empty:
+            continue
+
+        custom_depth = d["Depth_ft"] if "Depth_ft" in d.columns else [None] * len(d)
+        fig.add_trace(go.Scatter(
+            x=d[value_col],
+            y=d["Sample_Elev"],
+            mode="lines+markers",
+            name=str(bh),
+            customdata=custom_depth,
+            hovertemplate=(
+                "Borehole: %{fullData.name}<br>"
+                + x_title + ": %{x}<br>"
+                + "Elevation: %{y:.2f} ft<br>"
+                + "Depth: %{customdata} ft<extra></extra>"
+            ),
+        ))
+
+    fig.update_layout(
+        title=dict(text=title, font=dict(color="black", size=16)),
+        xaxis=dict(title=dict(text=x_title, font=dict(color="black", size=13))),
+        yaxis=dict(title=dict(text="Elevation (ft)", font=dict(color="black", size=13)), range=[y_min, y_max]),
+        height=430,
+        margin=dict(l=65, r=25, t=55, b=60),
+        plot_bgcolor="white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    fig.update_xaxes(showgrid=True, gridcolor="#e6e6e6", zeroline=False)
+    fig.update_yaxes(showgrid=True, gridcolor="#e6e6e6", zeroline=False)
+    return fig
+
+
+st.markdown("### Lab/SPT Plots for Boreholes in Section")
+if lab_plot_df.empty:
+    st.info("Upload the Lab Test Excel and draw/select a section with matching boreholes to show SPT/lab property plots.")
+else:
+    lab_plot_bhs_available = [bh for bh in ordered_bhs if str(bh) in set(lab_plot_df["Borehole"].astype(str))]
+    selected_lab_plot_bhs = st.multiselect(
+        "Select bore logs to plot",
+        options=lab_plot_bhs_available,
+        default=lab_plot_bhs_available,
+    )
+
+    if not selected_lab_plot_bhs:
+        st.info("Select at least one bore log to show the SPT/lab plots.")
+    else:
+        col_spt, col_duw, col_ucs = st.columns(3)
+
+        with col_spt:
+            if "SPT" in lab_plot_df.columns and lab_plot_df["SPT"].notna().any():
+                fig_spt = build_lab_property_figure(
+                    lab_plot_df, selected_lab_plot_bhs, "SPT",
+                    "SPT N", "Elevation vs SPT N", ymin_auto, ymax_auto
+                )
+                st.plotly_chart(fig_spt, use_container_width=True, config={"displaylogo": False, "toImageButtonOptions": {"format": "png", "filename": "elevation_vs_spt", "scale": 4}})
+            else:
+                st.info("No SPT N data found for the selected bore logs.")
+
+        with col_duw:
+            if "Dry_Unit_Weight" in lab_plot_df.columns and lab_plot_df["Dry_Unit_Weight"].notna().any():
+                fig_duw = build_lab_property_figure(
+                    lab_plot_df, selected_lab_plot_bhs, "Dry_Unit_Weight",
+                    "γd (pcf)", "Elevation vs Dry Density", ymin_auto, ymax_auto
+                )
+                st.plotly_chart(fig_duw, use_container_width=True, config={"displaylogo": False, "toImageButtonOptions": {"format": "png", "filename": "elevation_vs_dry_density", "scale": 4}})
+            else:
+                st.info("No dry density data found for the selected bore logs.")
+
+        with col_ucs:
+            if "UCS" in lab_plot_df.columns and lab_plot_df["UCS"].notna().any():
+                fig_ucs = build_lab_property_figure(
+                    lab_plot_df, selected_lab_plot_bhs, "UCS",
+                    "qu (tsf)", "Elevation vs UCS", ymin_auto, ymax_auto
+                )
+                st.plotly_chart(fig_ucs, use_container_width=True, config={"displaylogo": False, "toImageButtonOptions": {"format": "png", "filename": "elevation_vs_ucs", "scale": 4}})
+            else:
+                st.info("No UCS data found for the selected bore logs.")
+
+
 # ── 3D profile (PLAN COORDS) builder ────────────────────────────────────────
 def build_3d_profile_plan(
     df: pd.DataFrame,
