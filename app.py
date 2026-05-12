@@ -100,6 +100,8 @@ def build_matplotlib_profile_hatched(
     show_wc: bool = False,
     show_duw: bool = False,
     show_ucs: bool = False,
+    show_ll: bool = False,
+    show_pi: bool = False,
     figsize: Tuple[float, float] = (18, 10),
 ):
     """
@@ -189,7 +191,7 @@ def build_matplotlib_profile_hatched(
             lab_bore = lab_df[lab_df["Borehole"].astype(str) == str(bh)].dropna(subset=["Sample_Elev"])
             lab_offset = max(4.0, half * 0.15)
             for _, lab in lab_bore.iterrows():
-                label = format_lab_label(lab, show_spt=show_spt, show_wc=show_wc, show_duw=show_duw, show_ucs=show_ucs, sep="; ", style="mathtext")
+                label = format_lab_label(lab, show_spt=show_spt, show_wc=show_wc, show_duw=show_duw, show_ucs=show_ucs, show_ll=show_ll, show_pi=show_pi, sep="; ", style="mathtext")
                 if not label:
                     continue
                 y = float(lab["Sample_Elev"])
@@ -275,7 +277,7 @@ def _fmt_num(value, decimals=1):
         return str(int(round(value)))
     return f"{value:.{decimals}f}".rstrip("0").rstrip(".")
 
-def format_lab_label(row, show_spt=True, show_wc=False, show_duw=False, show_ucs=False, sep="; ", style="plain"):
+def format_lab_label(row, show_spt=True, show_wc=False, show_duw=False, show_ucs=False, show_ll=False, show_pi=False, sep="; ", style="plain"):
     """Build one compact label shown at each SPT/lab sample depth."""
     parts = []
 
@@ -297,6 +299,10 @@ def format_lab_label(row, show_spt=True, show_wc=False, show_duw=False, show_ucs
         parts.append(f"{gamma_d}={_fmt_num(row.get('Dry_Unit_Weight'))}pcf")
     if show_ucs and "UCS" in row and pd.notna(row.get("UCS")):
         parts.append(f"{q_u}={_fmt_num(row.get('UCS'), 2)}tsf")
+    if show_ll and "LL" in row and pd.notna(row.get("LL")):
+        parts.append(f"LL={_fmt_num(row.get('LL'))}")
+    if show_pi and "PI" in row and pd.notna(row.get("PI")):
+        parts.append(f"PI={_fmt_num(row.get('PI'))}")
     return sep.join(parts)
 
 @st.cache_data(show_spinner=False)
@@ -654,7 +660,7 @@ if maybe_line is not None:
 st.title("Section / Profile (ft) — Soil")
 corridor_ft = st.slider("Corridor width (ft)", 0, 1000, 200, 10)
 
-colA, colB, colC, colD, colE = st.columns([1, 1, 1, 1, 1])
+colA, colB, colC, colD, colE, colF, colG = st.columns([1, 1, 1, 1, 1, 1, 1])
 with colA:
     show_codes = st.checkbox("Show soil code (ML/SM/...)", value=False)
 with colB:
@@ -665,6 +671,10 @@ with colD:
     show_duw = st.checkbox("Show dry unit weight", value=False)
 with colE:
     show_ucs = st.checkbox("Show UCS", value=False)
+with colF:
+    show_ll = st.checkbox("Show LL", value=False)
+with colG:
+    show_pi = st.checkbox("Show PI", value=False)
 
 if not st.session_state["section_line_coords"]:
     st.info("Draw a polyline on the map (double-click to finish). The profiles will appear below automatically.")
@@ -733,6 +743,8 @@ def build_plotly_profile(
     show_wc: bool = False,
     show_duw: bool = False,
     show_ucs: bool = False,
+    show_ll: bool = False,
+    show_pi: bool = False,
     fig_height_px: int = 1000,
 ) -> go.Figure:
     # Width is either manual (passed) or auto from spacing
@@ -866,7 +878,7 @@ def build_plotly_profile(
             lab_bore = lab_df[lab_df["Borehole"].astype(str) == str(bh)].dropna(subset=["Sample_Elev"])
             lab_offset = max(4.0, half * 0.15)
             for _, lab in lab_bore.iterrows():
-                label = format_lab_label(lab, show_spt=show_spt, show_wc=show_wc, show_duw=show_duw, show_ucs=show_ucs, sep="; ", style="html")
+                label = format_lab_label(lab, show_spt=show_spt, show_wc=show_wc, show_duw=show_duw, show_ucs=show_ucs, show_ll=show_ll, show_pi=show_pi, sep="; ", style="html")
                 if not label:
                     continue
                 y = float(lab["Sample_Elev"])
@@ -952,6 +964,8 @@ fig2d = build_plotly_profile(
     show_wc=show_wc,
     show_duw=show_duw,
     show_ucs=show_ucs,
+    show_ll=show_ll,
+    show_pi=show_pi,
     fig_height_px=fig_height_px
 )
 st.plotly_chart(
@@ -980,6 +994,8 @@ fig_hatched = build_matplotlib_profile_hatched(
     show_wc=show_wc,
     show_duw=show_duw,
     show_ucs=show_ucs,
+    show_ll=show_ll,
+    show_pi=show_pi,
     figsize=(profile_fig_width, profile_fig_height)
 )
 
