@@ -304,7 +304,7 @@ def load_lab_multisheet(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
     """
     Load the separate Lab Test workbook.
     Expected columns include: Bore Log, Depth (ft), SPT N, Water Content (%),
-    Dry Unit Weight (pcf), and UCS (tsf). Header spaces are ignored.
+    Dry Unit Weight (pcf), UCS (tsf), LL, and PI. Header spaces are ignored.
     """
     all_sheets = pd.read_excel(io.BytesIO(uploaded_bytes), sheet_name=None)
     result: Dict[str, pd.DataFrame] = {}
@@ -321,6 +321,12 @@ def load_lab_multisheet(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
         "dry unit weight": "Dry_Unit_Weight",
         "ucs (tsf)": "UCS",
         "ucs": "UCS",
+        "ll": "LL",
+        "liquid limit": "LL",
+        "liquid limit (%)": "LL",
+        "pi": "PI",
+        "plasticity index": "PI",
+        "plasticity index (%)": "PI",
     }
 
     for i, (sheet, df_lab) in enumerate(all_sheets.items()):
@@ -334,10 +340,10 @@ def load_lab_multisheet(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
         if not {"Borehole", "Depth_ft"}.issubset(df_lab.columns):
             continue
         df_lab["Borehole"] = df_lab["Borehole"].astype(str).str.strip()
-        for c in ["Depth_ft", "SPT", "Water_Content", "Dry_Unit_Weight", "UCS"]:
+        for c in ["Depth_ft", "SPT", "Water_Content", "Dry_Unit_Weight", "UCS", "LL", "PI"]:
             if c in df_lab.columns:
                 df_lab[c] = pd.to_numeric(df_lab[c], errors="coerce")
-        keep = [c for c in ["Borehole", "Depth_ft", "SPT", "Water_Content", "Dry_Unit_Weight", "UCS"] if c in df_lab.columns]
+        keep = [c for c in ["Borehole", "Depth_ft", "SPT", "Water_Content", "Dry_Unit_Weight", "UCS", "LL", "PI"] if c in df_lab.columns]
         df_lab = df_lab.dropna(subset=["Borehole", "Depth_ft"])[keep].copy()
         if not df_lab.empty:
             df_lab["Lab_Sheet"] = sheet
@@ -1078,61 +1084,67 @@ else:
     if not selected_lab_plot_bhs:
         st.info("Select at least one bore log to show the SPT/lab plots.")
     else:
+        def render_lab_property_plot(
+            container,
+            value_col: str,
+            x_title: str,
+            title: str,
+            download_label: str,
+            file_name: str,
+            download_key: str,
+            no_data_message: str,
+        ):
+            with container:
+                if value_col in lab_plot_df.columns and lab_plot_df[value_col].notna().any():
+                    fig_prop = build_lab_property_matplotlib(
+                        lab_plot_df, selected_lab_plot_bhs, value_col,
+                        x_title, title, ymin_auto, ymax_auto
+                    )
+                    prop_png = figure_to_png_bytes(fig_prop, dpi=600)
+                    st.pyplot(fig_prop, clear_figure=True)
+                    st.download_button(
+                        download_label,
+                        data=prop_png,
+                        file_name=file_name,
+                        mime="image/png",
+                        key=download_key,
+                    )
+                else:
+                    st.info(no_data_message)
+
         col_spt, col_duw, col_ucs = st.columns(3)
+        render_lab_property_plot(
+            col_spt, "SPT", "SPT N", "Elevation vs SPT N",
+            "Download SPT Plot PNG", "elevation_vs_spt.png",
+            "download_spt_plot_png", "No SPT N data found for the selected bore logs."
+        )
+        render_lab_property_plot(
+            col_duw, "Dry_Unit_Weight", "γd (pcf)", "Elevation vs Dry Density",
+            "Download Dry Density Plot PNG", "elevation_vs_dry_density.png",
+            "download_dry_density_plot_png", "No dry density data found for the selected bore logs."
+        )
+        render_lab_property_plot(
+            col_ucs, "UCS", "qu (tsf)", "Elevation vs UCS",
+            "Download UCS Plot PNG", "elevation_vs_ucs.png",
+            "download_ucs_plot_png", "No UCS data found for the selected bore logs."
+        )
 
-        with col_spt:
-            if "SPT" in lab_plot_df.columns and lab_plot_df["SPT"].notna().any():
-                fig_spt = build_lab_property_matplotlib(
-                    lab_plot_df, selected_lab_plot_bhs, "SPT",
-                    "SPT N", "Elevation vs SPT N", ymin_auto, ymax_auto
-                )
-                spt_png = figure_to_png_bytes(fig_spt, dpi=600)
-                st.pyplot(fig_spt, clear_figure=True)
-                st.download_button(
-                    "Download SPT Plot PNG",
-                    data=spt_png,
-                    file_name="elevation_vs_spt.png",
-                    mime="image/png",
-                    key="download_spt_plot_png",
-                )
-            else:
-                st.info("No SPT N data found for the selected bore logs.")
-
-        with col_duw:
-            if "Dry_Unit_Weight" in lab_plot_df.columns and lab_plot_df["Dry_Unit_Weight"].notna().any():
-                fig_duw = build_lab_property_matplotlib(
-                    lab_plot_df, selected_lab_plot_bhs, "Dry_Unit_Weight",
-                    "γd (pcf)", "Elevation vs Dry Density", ymin_auto, ymax_auto
-                )
-                duw_png = figure_to_png_bytes(fig_duw, dpi=600)
-                st.pyplot(fig_duw, clear_figure=True)
-                st.download_button(
-                    "Download Dry Density Plot PNG",
-                    data=duw_png,
-                    file_name="elevation_vs_dry_density.png",
-                    mime="image/png",
-                    key="download_dry_density_plot_png",
-                )
-            else:
-                st.info("No dry density data found for the selected bore logs.")
-
-        with col_ucs:
-            if "UCS" in lab_plot_df.columns and lab_plot_df["UCS"].notna().any():
-                fig_ucs = build_lab_property_matplotlib(
-                    lab_plot_df, selected_lab_plot_bhs, "UCS",
-                    "qu (tsf)", "Elevation vs UCS", ymin_auto, ymax_auto
-                )
-                ucs_png = figure_to_png_bytes(fig_ucs, dpi=600)
-                st.pyplot(fig_ucs, clear_figure=True)
-                st.download_button(
-                    "Download UCS Plot PNG",
-                    data=ucs_png,
-                    file_name="elevation_vs_ucs.png",
-                    mime="image/png",
-                    key="download_ucs_plot_png",
-                )
-            else:
-                st.info("No UCS data found for the selected bore logs.")
+        col_wc, col_ll, col_pi = st.columns(3)
+        render_lab_property_plot(
+            col_wc, "Water_Content", "Water Content (%)", "Elevation vs Water Content",
+            "Download Water Content Plot PNG", "elevation_vs_water_content.png",
+            "download_water_content_plot_png", "No water content data found for the selected bore logs."
+        )
+        render_lab_property_plot(
+            col_ll, "LL", "LL", "Elevation vs LL",
+            "Download LL Plot PNG", "elevation_vs_ll.png",
+            "download_ll_plot_png", "No LL data found for the selected bore logs."
+        )
+        render_lab_property_plot(
+            col_pi, "PI", "PI", "Elevation vs PI",
+            "Download PI Plot PNG", "elevation_vs_pi.png",
+            "download_pi_plot_png", "No PI data found for the selected bore logs."
+        )
 
 
 # ── 3D profile (PLAN COORDS) builder ────────────────────────────────────────
