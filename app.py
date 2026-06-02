@@ -240,7 +240,7 @@ RENAME_MAP = {
     "Elevation To": "Elevation_To",
     "Soil Layer Description": "Soil_Type",
     "Latitude": "Latitude", "Longitude": "Longitude",
-    "SPT N-Value": "SPT", "Elevation Water Table": "Water_Elev",
+    "SPT N-Value": "SPT", "Water Elevation After Drilling ": "Water_Elev",
 }
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
