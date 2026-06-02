@@ -19,6 +19,7 @@ from folium.plugins import Draw
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D
 
 # ── Visual config ────────────────────────────────────────────────────────────
 EXISTING_TEXT_COLORS = [
@@ -133,8 +134,9 @@ def build_matplotlib_profile_hatched(
 
     used_types = set()
 
-    # Water table markers (one per BH if available)
-    water_x, water_y = [], []
+    # Water table markers (one per BH per groundwater reading type if available)
+    water_points = {label: {"x": [], "y": [], "color": color, "mpl_marker": mpl_marker}
+                    for _, label, color, _, mpl_marker in WATER_TABLE_PLOT_COLUMNS}
 
     for bh in ordered_bhs:
         bore = df[df["Borehole"] == bh]
@@ -145,16 +147,10 @@ def build_matplotlib_profile_hatched(
         top_el = float(bore["Elevation_From"].max())
         ax.text(x, top_el + 1.0, bh, ha="center", va="bottom", fontsize=10, fontweight="bold")
 
-        # Water table (optional)
-        if "Water_Elev" in bore.columns:
-            wt_series = pd.to_numeric(bore["Water_Elev"], errors="coerce").dropna()
-            if not wt_series.empty:
-                try:
-                    wt = float(wt_series.iloc[0])
-                    water_x.append(x)
-                    water_y.append(wt)
-                except (ValueError, TypeError):
-                    pass
+        # Groundwater elevations (optional): during drilling and after drilling.
+        for label, pt in collect_water_points_for_borehole(bore, x).items():
+            water_points[label]["x"].extend(pt["x"])
+            water_points[label]["y"].extend(pt["y"])
 
         # Soil layers
         for _, r in bore.iterrows():
@@ -198,16 +194,28 @@ def build_matplotlib_profile_hatched(
                 ax.plot([x + half, x + half + lab_offset * 0.7], [y, y], color="black", linewidth=0.8)
                 ax.text(x + half + lab_offset, y, label, ha="left", va="center", fontsize=8)
 
-    if water_x:
-        ax.scatter(water_x, water_y, marker="v", s=70)
-        ax.legend(["Water Table"], loc="upper left")
+    # Plot groundwater markers after soil rectangles so they stay visible.
+    water_handles = []
+    for label, pts in water_points.items():
+        if pts["x"]:
+            ax.scatter(
+                pts["x"], pts["y"],
+                marker=pts["mpl_marker"], s=90,
+                color=pts["color"], edgecolors="black", linewidths=0.8,
+                zorder=5, label=label
+            )
+            water_handles.append(Line2D(
+                [0], [0], marker=pts["mpl_marker"], color="none",
+                markerfacecolor=pts["color"], markeredgecolor="black",
+                markersize=9, label=label
+            ))
 
     # Legend: show soil types present (ordered)
     ordered_present = [s for s in ORDERED_SOIL_TYPES if s in used_types]
     extra_present = sorted([s for s in used_types if s not in set(ORDERED_SOIL_TYPES)])
     legend_types = ordered_present + extra_present
 
-    handles = []
+    handles = water_handles.copy()
     for s in legend_types:
         handles.append(
             mpatches.Patch(
@@ -240,8 +248,18 @@ RENAME_MAP = {
     "Elevation To": "Elevation_To",
     "Soil Layer Description": "Soil_Type",
     "Latitude": "Latitude", "Longitude": "Longitude",
-    "SPT N-Value": "SPT", "Water Elevation After Drilling": "Water_Elev",
+    "SPT N-Value": "SPT",
+    # Keep the two groundwater readings separate so both can be shown in profiles.
+    "Water Elevation During Drilling": "Water_Elev_During",
+    "Water Elevation After Drilling": "Water_Elev_After",
 }
+
+# Profile symbols/colors for groundwater readings.
+# The column names are created in standardize_water_table_columns().
+WATER_TABLE_PLOT_COLUMNS = [
+    ("Water_Elev_During", "Water During Drilling", "#00a6d6", "triangle-down", "v"),
+    ("Water_Elev_After", "Water After Drilling", "#1e88e5", "triangle-up", "^"),
+]
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def compute_spt_avg(value):
@@ -276,6 +294,84 @@ def _fmt_num(value, decimals=1):
     if abs(value - round(value)) < 1e-9:
         return str(int(round(value)))
     return f"{value:.{decimals}f}".rstrip("0").rstrip(".")
+
+
+def _normalized_col_name(name: str) -> str:
+    """Normalize a column name for tolerant matching across Excel header variants."""
+    return re.sub(r"[^a-z0-9]+", "", str(name).strip().lower())
+
+
+def standardize_water_table_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create separate numeric columns for groundwater elevations measured during and
+    after drilling. This handles exact project headers plus common variations.
+    """
+    df = df.copy()
+    normalized_to_original = {_normalized_col_name(c): c for c in df.columns}
+
+    explicit_candidates = {
+        "Water_Elev_During": [
+            "waterelevationduringdrilling", "waterelevduringdrilling",
+            "waterlevelduringdrilling", "groundwaterelevationduringdrilling",
+            "groundwaterlevelduringdrilling", "duringdrillingwaterelevation",
+        ],
+        "Water_Elev_After": [
+            "waterelevationafterdrilling", "waterelevafterdrilling",
+            "waterlevelafterdrilling", "groundwaterelevationafterdrilling",
+            "groundwaterlevelafterdrilling", "afterdrillingwaterelevation",
+            "waterelev", "waterelevation",
+        ],
+    }
+
+    for target_col, candidates in explicit_candidates.items():
+        if target_col in df.columns:
+            df[target_col] = pd.to_numeric(df[target_col], errors="coerce")
+            continue
+        for candidate in candidates:
+            source_col = normalized_to_original.get(candidate)
+            if source_col is not None:
+                df[target_col] = pd.to_numeric(df[source_col], errors="coerce")
+                break
+
+    # Fallback for headers not covered above, e.g. "GW Elev. During Drilling".
+    for c in list(df.columns):
+        norm = _normalized_col_name(c)
+        if not any(token in norm for token in ["water", "groundwater", "gw"]):
+            continue
+        if not any(token in norm for token in ["elev", "level"]):
+            continue
+        if "during" in norm and "Water_Elev_During" not in df.columns:
+            df["Water_Elev_During"] = pd.to_numeric(df[c], errors="coerce")
+        if "after" in norm and "Water_Elev_After" not in df.columns:
+            df["Water_Elev_After"] = pd.to_numeric(df[c], errors="coerce")
+
+    # Backward compatibility with older versions of this app.py that used one
+    # generic Water_Elev column for after-drilling values.
+    if "Water_Elev" in df.columns and "Water_Elev_After" not in df.columns:
+        df["Water_Elev_After"] = pd.to_numeric(df["Water_Elev"], errors="coerce")
+
+    return df
+
+
+def collect_water_points_for_borehole(bore: pd.DataFrame, x: float) -> Dict[str, Dict[str, list]]:
+    """Return plotted groundwater points for one borehole, split by reading type."""
+    points: Dict[str, Dict[str, list]] = {}
+    for col, label, color, plotly_symbol, mpl_marker in WATER_TABLE_PLOT_COLUMNS:
+        if col not in bore.columns:
+            continue
+        wt_series = pd.to_numeric(bore[col], errors="coerce").dropna()
+        if wt_series.empty:
+            continue
+        wt = float(wt_series.iloc[0])
+        points[label] = {
+            "x": [x],
+            "y": [wt],
+            "color": color,
+            "plotly_symbol": plotly_symbol,
+            "mpl_marker": mpl_marker,
+            "source_col": col,
+        }
+    return points
 
 def format_lab_label(row, show_spt=True, show_wc=False, show_duw=False, show_ucs=False, show_ll=False, show_pi=False, sep="; ", style="plain"):
     """Build one compact label shown at each SPT/lab sample depth."""
@@ -409,6 +505,7 @@ def load_multisheet_existing(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
         # Clean headers and rename to unified names
         df.columns = df.columns.str.strip()
         df.rename(columns=RENAME_MAP, inplace=True, errors="ignore")
+        df = standardize_water_table_columns(df)
 
         # Ensure Latitude/Longitude columns exist and are numeric
         if not {"Latitude", "Longitude"}.issubset(df.columns):
@@ -504,8 +601,15 @@ def latlon_to_local_xy_ft(lat, lon, lat0, lon0):
 def auto_y_limits(df, pad_ratio=0.05):
     if df.empty:
         return 0, 1
-    y_min = float(df['Elevation_To'].min())
-    y_max = float(df['Elevation_From'].max())
+    y_values = [df['Elevation_To'], df['Elevation_From']]
+    for water_col, _, _, _, _ in WATER_TABLE_PLOT_COLUMNS:
+        if water_col in df.columns:
+            vals = pd.to_numeric(df[water_col], errors="coerce").dropna()
+            if not vals.empty:
+                y_values.append(vals)
+    y_all = pd.concat(y_values, ignore_index=True)
+    y_min = float(y_all.min())
+    y_max = float(y_all.max())
     rng = max(1.0, (y_max - y_min))
     pad = rng * pad_ratio
     return y_min - pad, y_max + pad
@@ -816,8 +920,9 @@ def build_plotly_profile(
         ))
         xv += x_step
 
-    # Collect water elevations per BH (one marker per BH)
-    water_x, water_y = [], []
+    # Collect water elevations per BH per groundwater reading type.
+    water_points = {label: {"x": [], "y": [], "color": color, "plotly_symbol": plotly_symbol}
+                    for _, label, color, plotly_symbol, _ in WATER_TABLE_PLOT_COLUMNS}
     lab_marker_x, lab_marker_y, lab_hover = [], [], []
 
     # Soil rectangles + labels
@@ -833,15 +938,9 @@ def build_plotly_profile(
             font=dict(size=bh_font, family="Arial Black", color="#111")
         ))
 
-        if "Water_Elev" in bore.columns:
-            wt_series = pd.to_numeric(bore["Water_Elev"], errors="coerce").dropna()
-            if not wt_series.empty:
-                try:
-                    wt = float(wt_series.iloc[0])
-                    water_x.append(x)
-                    water_y.append(wt)
-                except (ValueError, TypeError):
-                    pass
+        for label, pt in collect_water_points_for_borehole(bore, x).items():
+            water_points[label]["x"].extend(pt["x"])
+            water_points[label]["y"].extend(pt["y"])
 
         for _, r in bore.iterrows():
             ef, et = float(r["Elevation_From"]), float(r["Elevation_To"])
@@ -908,13 +1007,17 @@ def build_plotly_profile(
             marker=dict(size=12, color=SOIL_COLOR_MAP.get(soil, "#cccccc")),
             name=soil, showlegend=True
         ))
-    if water_x:
-        fig.add_trace(go.Scatter(
-            x=water_x, y=water_y, mode="markers",
-            marker=dict(symbol="triangle-down", size=14, color="#1e88e5"),
-            name="Water Table",
-            hovertemplate="Water Elev: %{y:.2f} ft<extra></extra>"
-        ))
+    for label, pts in water_points.items():
+        if pts["x"]:
+            fig.add_trace(go.Scatter(
+                x=pts["x"], y=pts["y"], mode="markers",
+                marker=dict(
+                    symbol=pts["plotly_symbol"], size=15,
+                    color=pts["color"], line=dict(color="black", width=1)
+                ),
+                name=label,
+                hovertemplate=f"{label}<br>Elevation: %{{y:.2f}} ft<extra></extra>"
+            ))
     # Lab/SPT values are shown as text labels only.
     # Do not add sample point markers, so no open circles appear before labels.
     
