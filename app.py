@@ -258,7 +258,7 @@ RENAME_MAP = {
 # The column names are created in standardize_water_table_columns().
 WATER_TABLE_PLOT_COLUMNS = [
     ("Water_Elev_During", "Water During Drilling", "#00a6d6", "triangle-down", "v"),
-    ("Water_Elev_After", "Water After Drilling", "#00000", "triangle-down", "v"),
+    ("Water_Elev_After", "Water After Drilling", "#000000", "triangle-down", "v"),
 ]
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
