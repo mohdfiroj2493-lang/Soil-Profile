@@ -9,6 +9,7 @@
 from typing import Dict, List, Tuple, Optional
 import io, math, re
 import pandas as pd
+import numpy as np
 from geopy.distance import geodesic
 from shapely.geometry import LineString, Point
 import streamlit as st
@@ -716,6 +717,169 @@ def auto_y_limits(df, pad_ratio=0.05):
     pad = rng * pad_ratio
     return y_min - pad, y_max + pad
 
+
+
+# ── Groundwater contour map helpers ─────────────────────────────────────────
+def prepare_groundwater_contour_points(df: pd.DataFrame, water_col: str) -> pd.DataFrame:
+    """Return one groundwater point per borehole for contour mapping."""
+    required = {"Borehole", "Latitude", "Longitude", water_col}
+    if df.empty or not required.issubset(df.columns):
+        return pd.DataFrame()
+
+    rows = []
+    for bh, bore in df.groupby("Borehole"):
+        vals = pd.to_numeric(bore[water_col], errors="coerce").dropna()
+        if vals.empty:
+            continue
+        lat = pd.to_numeric(bore["Latitude"], errors="coerce").dropna()
+        lon = pd.to_numeric(bore["Longitude"], errors="coerce").dropna()
+        if lat.empty or lon.empty:
+            continue
+        rows.append({
+            "Borehole": str(bh),
+            "Latitude": float(lat.iloc[0]),
+            "Longitude": float(lon.iloc[0]),
+            "Water_Elev": float(vals.iloc[0]),
+        })
+    return pd.DataFrame(rows)
+
+
+def idw_grid_interpolation(x, y, z, grid_size: int = 170, power: float = 2.0, pad_ratio: float = 0.08):
+    """
+    Inverse-distance weighted groundwater surface.
+    The interpolated surface is clipped near the convex hull of the boreholes so
+    the plot does not show a misleading rectangular contour field.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    z = np.asarray(z, dtype=float)
+    if len(z) < 3:
+        return None, None, None
+
+    xrng = max(float(x.max() - x.min()), 1.0)
+    yrng = max(float(y.max() - y.min()), 1.0)
+    xpad = xrng * pad_ratio
+    ypad = yrng * pad_ratio
+
+    gx = np.linspace(float(x.min() - xpad), float(x.max() + xpad), int(grid_size))
+    gy = np.linspace(float(y.min() - ypad), float(y.max() + ypad), int(grid_size))
+    xx, yy = np.meshgrid(gx, gy)
+
+    dx = xx[..., None] - x[None, None, :]
+    dy = yy[..., None] - y[None, None, :]
+    dist2 = dx * dx + dy * dy
+    weights = 1.0 / np.maximum(dist2, 1.0e-9) ** (power / 2.0)
+    zz = np.sum(weights * z[None, None, :], axis=2) / np.sum(weights, axis=2)
+
+    try:
+        from shapely.geometry import MultiPoint
+        from shapely.prepared import prep
+        hull = MultiPoint(list(zip(x, y))).convex_hull.buffer(max(xrng, yrng) * 0.04)
+        prepared_hull = prep(hull)
+        mask = np.zeros_like(zz, dtype=bool)
+        for r in range(zz.shape[0]):
+            for c in range(zz.shape[1]):
+                mask[r, c] = not prepared_hull.contains(Point(float(xx[r, c]), float(yy[r, c])))
+        zz = np.where(mask, np.nan, zz)
+    except Exception:
+        pass
+
+    return gx, gy, zz
+
+
+def build_groundwater_contour_figure(
+    df: pd.DataFrame,
+    water_col: str,
+    title: str,
+    section_line: Optional[LineString] = None,
+    grid_size: int = 170,
+    contour_interval: Optional[float] = None,
+) -> Optional[go.Figure]:
+    """Create a plan-view groundwater contour map from borehole water elevations."""
+    pts = prepare_groundwater_contour_points(df, water_col)
+    if pts.empty or len(pts) < 3:
+        return None
+
+    lat0 = float(pts["Latitude"].mean())
+    lon0 = float(pts["Longitude"].mean())
+    xy = [latlon_to_local_xy_ft(float(r["Latitude"]), float(r["Longitude"]), lat0, lon0) for _, r in pts.iterrows()]
+    pts["X_ft"] = [p[0] for p in xy]
+    pts["Y_ft"] = [p[1] for p in xy]
+
+    gx, gy, gz = idw_grid_interpolation(pts["X_ft"], pts["Y_ft"], pts["Water_Elev"], grid_size=grid_size)
+    if gx is None or gz is None or np.all(np.isnan(gz)):
+        return None
+
+    zmin = float(np.nanmin(gz))
+    zmax = float(np.nanmax(gz))
+    if contour_interval is None or contour_interval <= 0:
+        contour_interval = _nice_step(max(zmax - zmin, 1.0), target=10)
+    start = math.floor(zmin / contour_interval) * contour_interval
+    end = math.ceil(zmax / contour_interval) * contour_interval
+
+    fig = go.Figure()
+    fig.add_trace(go.Contour(
+        x=gx,
+        y=gy,
+        z=gz,
+        colorscale="Viridis",
+        contours=dict(
+            start=start,
+            end=end,
+            size=contour_interval,
+            coloring="heatmap",
+            showlabels=True,
+            labelfont=dict(size=12, color="white"),
+        ),
+        line=dict(width=1.3, color="rgba(0,0,0,0.50)"),
+        colorbar=dict(title="GW Elev. (ft)"),
+        hovertemplate="Easting: %{x:.1f} ft<br>Northing: %{y:.1f} ft<br>GW Elev.: %{z:.2f} ft<extra></extra>",
+        name="Groundwater elevation",
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=pts["X_ft"],
+        y=pts["Y_ft"],
+        mode="markers+text",
+        marker=dict(size=12, color="white", line=dict(color="black", width=1.6)),
+        text=pts["Borehole"],
+        textposition="top center",
+        textfont=dict(size=11, color="black"),
+        customdata=np.stack([pts["Water_Elev"]], axis=-1),
+        hovertemplate="%{text}<br>GW Elev.: %{customdata[0]:.2f} ft<extra></extra>",
+        name="Boreholes",
+    ))
+
+    if section_line is not None:
+        try:
+            sx, sy = [], []
+            for lon, lat in section_line.coords:
+                x, y = latlon_to_local_xy_ft(float(lat), float(lon), lat0, lon0)
+                sx.append(x)
+                sy.append(y)
+            fig.add_trace(go.Scatter(
+                x=sx,
+                y=sy,
+                mode="lines",
+                line=dict(color="red", width=4),
+                name="Section line",
+                hoverinfo="skip",
+            ))
+        except Exception:
+            pass
+
+    fig.update_layout(
+        title=dict(text=title, x=0.02, font=dict(size=20, color="black")),
+        xaxis=dict(title="Easting (ft, local)", scaleanchor="y", scaleratio=1, showgrid=True, gridcolor="rgba(0,0,0,0.12)"),
+        yaxis=dict(title="Northing (ft, local)", showgrid=True, gridcolor="rgba(0,0,0,0.12)"),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        height=780,
+        margin=dict(l=70, r=120, t=80, b=70),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
 # ── Map helpers ──────────────────────────────────────────────────────────────
 def add_labeled_point(fmap, lat, lon, name, color_hex):
     folium.CircleMarker(
@@ -841,6 +1005,82 @@ LayerControl(position="topright").add_to(fmap)
 
 map_out = st_folium(fmap, height=600, use_container_width=True,
                     returned_objects=["last_active_drawing", "all_drawings"], key="map")
+
+# ── Groundwater contour maps in plan view ───────────────────────────────────
+st.markdown("### Groundwater Contour Map — Plan View (optional)")
+show_gw_contours = st.checkbox("Show groundwater contour map for the full selected region", value=False)
+
+if show_gw_contours:
+    gw_option_map = {
+        "Water Elevation During Drilling": "Water_Elev_During",
+        "Water Elevation After Drilling": "Water_Elev_After",
+    }
+    available_gw_options = [
+        label for label, col in gw_option_map.items()
+        if col in df.columns and pd.to_numeric(df[col], errors="coerce").notna().any()
+    ]
+
+    if not available_gw_options:
+        st.info("No groundwater elevation data found for contour mapping.")
+    else:
+        c1, c2, c3 = st.columns([1.2, 1, 1])
+        with c1:
+            selected_gw_maps = st.multiselect(
+                "Groundwater readings to contour",
+                options=available_gw_options,
+                default=available_gw_options,
+            )
+        with c2:
+            gw_grid_size = st.slider("Contour smoothness", 80, 260, 170, 10)
+        with c3:
+            manual_interval = st.checkbox("Use manual contour interval", value=False)
+            gw_contour_interval = None
+            if manual_interval:
+                gw_contour_interval = st.number_input("Interval (ft)", min_value=0.1, max_value=50.0, value=1.0, step=0.5)
+
+        contour_section_line = None
+        if st.session_state.get("section_line_coords"):
+            try:
+                contour_section_line = LineString(st.session_state["section_line_coords"])
+            except Exception:
+                contour_section_line = None
+
+        if not selected_gw_maps:
+            st.info("Select at least one groundwater reading to show a contour map.")
+        else:
+            for label in selected_gw_maps:
+                col = gw_option_map[label]
+                fig_contour = build_groundwater_contour_figure(
+                    df=df,
+                    water_col=col,
+                    title=f"Groundwater Contour Map — {label}",
+                    section_line=contour_section_line,
+                    grid_size=gw_grid_size,
+                    contour_interval=gw_contour_interval,
+                )
+                if fig_contour is None:
+                    st.warning(f"At least 3 boreholes with {label.lower()} are required to create a contour map.")
+                else:
+                    st.plotly_chart(
+                        fig_contour,
+                        use_container_width=True,
+                        config={
+                            "displaylogo": False,
+                            "toImageButtonOptions": {
+                                "format": "png",
+                                "filename": f"groundwater_contour_{col.lower()}",
+                                "scale": 4,
+                            },
+                        },
+                    )
+                    html = fig_contour.to_html(include_plotlyjs="cdn", full_html=True)
+                    st.download_button(
+                        f"Download interactive HTML — {label}",
+                        data=html,
+                        file_name=f"groundwater_contour_{col.lower()}.html",
+                        mime="text/html",
+                    )
+
 # ── Extract drawn section line ──────────────────────────────────────────────
 def extract_linestring(mo):
     lad = mo.get("last_active_drawing")
