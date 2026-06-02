@@ -11,7 +11,7 @@ import io, math, re
 import pandas as pd
 import numpy as np
 from geopy.distance import geodesic
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString, Point, Polygon
 import streamlit as st
 from streamlit_folium import st_folium
 import folium
@@ -764,11 +764,18 @@ def prepare_groundwater_contour_points(df: pd.DataFrame, water_col: str) -> pd.D
     return pd.DataFrame(rows)
 
 
-def idw_grid_interpolation(x, y, z, grid_size: int = 170, power: float = 2.0, pad_ratio: float = 0.08):
+def idw_grid_interpolation(
+    x, y, z,
+    grid_size: int = 170,
+    power: float = 2.0,
+    pad_ratio: float = 0.08,
+    clip_polygon_xy: Optional[Polygon] = None,
+):
     """
     Inverse-distance weighted groundwater surface.
-    The interpolated surface is clipped near the convex hull of the boreholes so
-    the plot does not show a misleading rectangular contour field.
+    If a drawn contour area is supplied, the interpolated surface is clipped to
+    that polygon/rectangle. Otherwise it is clipped near the convex hull of the
+    boreholes so the plot does not show a misleading rectangular contour field.
     """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -778,11 +785,21 @@ def idw_grid_interpolation(x, y, z, grid_size: int = 170, power: float = 2.0, pa
 
     xrng = max(float(x.max() - x.min()), 1.0)
     yrng = max(float(y.max() - y.min()), 1.0)
-    xpad = xrng * pad_ratio
-    ypad = yrng * pad_ratio
 
-    gx = np.linspace(float(x.min() - xpad), float(x.max() + xpad), int(grid_size))
-    gy = np.linspace(float(y.min() - ypad), float(y.max() + ypad), int(grid_size))
+    if clip_polygon_xy is not None and not clip_polygon_xy.is_empty:
+        minx, miny, maxx, maxy = clip_polygon_xy.bounds
+        bxrng = max(float(maxx - minx), 1.0)
+        byrng = max(float(maxy - miny), 1.0)
+        xpad = bxrng * 0.02
+        ypad = byrng * 0.02
+        gx = np.linspace(float(minx - xpad), float(maxx + xpad), int(grid_size))
+        gy = np.linspace(float(miny - ypad), float(maxy + ypad), int(grid_size))
+    else:
+        xpad = xrng * pad_ratio
+        ypad = yrng * pad_ratio
+        gx = np.linspace(float(x.min() - xpad), float(x.max() + xpad), int(grid_size))
+        gy = np.linspace(float(y.min() - ypad), float(y.max() + ypad), int(grid_size))
+
     xx, yy = np.meshgrid(gx, gy)
 
     dx = xx[..., None] - x[None, None, :]
@@ -794,12 +811,16 @@ def idw_grid_interpolation(x, y, z, grid_size: int = 170, power: float = 2.0, pa
     try:
         from shapely.geometry import MultiPoint
         from shapely.prepared import prep
-        hull = MultiPoint(list(zip(x, y))).convex_hull.buffer(max(xrng, yrng) * 0.04)
-        prepared_hull = prep(hull)
+        if clip_polygon_xy is not None and not clip_polygon_xy.is_empty:
+            clip_geom = clip_polygon_xy
+        else:
+            clip_geom = MultiPoint(list(zip(x, y))).convex_hull.buffer(max(xrng, yrng) * 0.04)
+        prepared_clip = prep(clip_geom)
         mask = np.zeros_like(zz, dtype=bool)
         for r in range(zz.shape[0]):
             for c in range(zz.shape[1]):
-                mask[r, c] = not prepared_hull.contains(Point(float(xx[r, c]), float(yy[r, c])))
+                pt = Point(float(xx[r, c]), float(yy[r, c]))
+                mask[r, c] = not (prepared_clip.contains(pt) or prepared_clip.touches(pt))
         zz = np.where(mask, np.nan, zz)
     except Exception:
         pass
@@ -812,6 +833,7 @@ def build_groundwater_contour_figure(
     water_col: str,
     title: str,
     section_line: Optional[LineString] = None,
+    contour_area: Optional[Polygon] = None,
     grid_size: int = 170,
     contour_interval: Optional[float] = None,
 ) -> Optional[go.Figure]:
@@ -820,13 +842,38 @@ def build_groundwater_contour_figure(
     if pts.empty or len(pts) < 3:
         return None
 
+    # If the user drew a polygon/rectangle, only use boreholes inside that area.
+    if contour_area is not None and not contour_area.is_empty:
+        inside = []
+        for _, r in pts.iterrows():
+            pnt = Point(float(r["Longitude"]), float(r["Latitude"]))
+            inside.append(contour_area.contains(pnt) or contour_area.touches(pnt))
+        pts = pts.loc[inside].copy()
+        if pts.empty or len(pts) < 3:
+            return None
+
     lat0 = float(pts["Latitude"].mean())
     lon0 = float(pts["Longitude"].mean())
     xy = [latlon_to_local_xy_ft(float(r["Latitude"]), float(r["Longitude"]), lat0, lon0) for _, r in pts.iterrows()]
     pts["X_ft"] = [p[0] for p in xy]
     pts["Y_ft"] = [p[1] for p in xy]
 
-    gx, gy, gz = idw_grid_interpolation(pts["X_ft"], pts["Y_ft"], pts["Water_Elev"], grid_size=grid_size)
+    contour_area_xy = None
+    if contour_area is not None and not contour_area.is_empty:
+        try:
+            area_xy = []
+            for lon, lat in list(contour_area.exterior.coords):
+                ax_ft, ay_ft = latlon_to_local_xy_ft(float(lat), float(lon), lat0, lon0)
+                area_xy.append((ax_ft, ay_ft))
+            contour_area_xy = Polygon(area_xy)
+        except Exception:
+            contour_area_xy = None
+
+    gx, gy, gz = idw_grid_interpolation(
+        pts["X_ft"], pts["Y_ft"], pts["Water_Elev"],
+        grid_size=grid_size,
+        clip_polygon_xy=contour_area_xy,
+    )
     if gx is None or gz is None or np.all(np.isnan(gz)):
         return None
 
@@ -885,6 +932,24 @@ def build_groundwater_contour_figure(
         hovertemplate="%{text}<br>GW Elev.: %{customdata[0]:.2f} ft<extra></extra>",
         name="Boreholes",
     ))
+
+    if contour_area is not None and not contour_area.is_empty:
+        try:
+            ax_line, ay_line = [], []
+            for lon, lat in list(contour_area.exterior.coords):
+                x, y = latlon_to_local_xy_ft(float(lat), float(lon), lat0, lon0)
+                ax_line.append(x)
+                ay_line.append(y)
+            fig.add_trace(go.Scatter(
+                x=ax_line,
+                y=ay_line,
+                mode="lines",
+                line=dict(color="black", width=3, dash="dash"),
+                name="Selected contour area",
+                hoverinfo="skip",
+            ))
+        except Exception:
+            pass
 
     if section_line is not None:
         try:
@@ -972,6 +1037,12 @@ st.sidebar.markdown("---")
 # Combine selected sheets into single DataFrame
 df = pd.concat([existing_dict[s] for s in selected_sheets if not existing_dict[s].empty], ignore_index=True)
 
+# Keep the drawn section line and groundwater contour area between Streamlit reruns.
+if "section_line_coords" not in st.session_state:
+    st.session_state["section_line_coords"] = None
+if "contour_area_coords" not in st.session_state:
+    st.session_state["contour_area_coords"] = None
+
 # ── Load optional LAB TEST workbook (SPT + lab data) ────────────────────────
 lab_df = pd.DataFrame()
 if lab_file is not None:
@@ -1030,11 +1101,31 @@ for sheet, dfp in proposed_dict.items():
         add_labeled_point(fg, float(r["Latitude"]), float(r["Longitude"]), nm, color)
     fg.add_to(fmap)
 
-# Drawing tools and layer toggle
+# Show the saved contour-area selection on the map after reruns.
+if st.session_state.get("contour_area_coords"):
+    try:
+        folium.Polygon(
+            locations=[(lat, lon) for lon, lat in st.session_state["contour_area_coords"]],
+            color="#ff4b4b",
+            weight=3,
+            fill=True,
+            fill_opacity=0.16,
+            tooltip="Groundwater contour area",
+        ).add_to(fmap)
+    except Exception:
+        pass
+
+# Drawing tools and layer toggle.
+# Polyline = soil section/profile; Polygon/Rectangle = groundwater contour area.
 Draw(
-    draw_options={"polyline": {"shapeOptions": {"color": "#0000ff", "weight": 6}},
-                  "polygon": False, "circle": False, "rectangle": False,
-                  "marker": False, "circlemarker": False},
+    draw_options={
+        "polyline": {"shapeOptions": {"color": "#0000ff", "weight": 6}},
+        "polygon": {"shapeOptions": {"color": "#ff4b4b", "weight": 3, "fillOpacity": 0.16}},
+        "rectangle": {"shapeOptions": {"color": "#ff4b4b", "weight": 3, "fillOpacity": 0.16}},
+        "circle": False,
+        "marker": False,
+        "circlemarker": False,
+    },
     edit_options={"edit": True, "remove": True}
 ).add_to(fmap)
 LayerControl(position="topright").add_to(fmap)
@@ -1042,9 +1133,55 @@ LayerControl(position="topright").add_to(fmap)
 map_out = st_folium(fmap, height=600, use_container_width=True,
                     returned_objects=["last_active_drawing", "all_drawings"], key="map")
 
+def extract_linestring(mo):
+    lad = mo.get("last_active_drawing")
+    if isinstance(lad, dict):
+        geom = lad.get("geometry", {})
+        if geom.get("type") == "LineString" and len(geom.get("coordinates", [])) >= 2:
+            return LineString(geom["coordinates"])
+    if mo.get("all_drawings") and isinstance(mo["all_drawings"], dict):
+        for feat in reversed(mo["all_drawings"].get("features", [])):
+            geom = feat.get("geometry", {})
+            if geom.get("type") == "LineString" and len(geom.get("coordinates", [])) >= 2:
+                return LineString(geom["coordinates"])
+    return None
+
+def extract_area_polygon(mo):
+    def polygon_from_geom(geom):
+        if geom.get("type") != "Polygon":
+            return None
+        coords = geom.get("coordinates", [])
+        if not coords or len(coords[0]) < 4:
+            return None
+        poly = Polygon(coords[0])
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+        return poly if poly.is_valid and not poly.is_empty else None
+
+    lad = mo.get("last_active_drawing")
+    if isinstance(lad, dict):
+        poly = polygon_from_geom(lad.get("geometry", {}))
+        if poly is not None:
+            return poly
+    if mo.get("all_drawings") and isinstance(mo["all_drawings"], dict):
+        for feat in reversed(mo["all_drawings"].get("features", [])):
+            poly = polygon_from_geom(feat.get("geometry", {}))
+            if poly is not None:
+                return poly
+    return None
+
+maybe_line = extract_linestring(map_out or {})
+if maybe_line is not None:
+    st.session_state["section_line_coords"] = list(map(list, maybe_line.coords))
+
+maybe_area = extract_area_polygon(map_out or {})
+if maybe_area is not None:
+    st.session_state["contour_area_coords"] = list(map(list, maybe_area.exterior.coords))
+
 # ── Groundwater contour maps in plan view ───────────────────────────────────
 st.markdown("### Groundwater Contour Map — Plan View (optional)")
-show_gw_contours = st.checkbox("Show groundwater contour map for the full selected region", value=False)
+st.caption("Draw a red polygon or rectangle on the map to limit the groundwater contour area. Draw a blue polyline for the soil profile section.")
+show_gw_contours = st.checkbox("Show groundwater contour map", value=False)
 
 if show_gw_contours:
     gw_option_map = {
@@ -1074,6 +1211,13 @@ if show_gw_contours:
             if manual_interval:
                 gw_contour_interval = st.number_input("Interval (ft)", min_value=0.1, max_value=50.0, value=1.0, step=0.5)
 
+        contour_scope = st.radio(
+            "Contour area",
+            options=["Drawn polygon/rectangle only", "Full selected dataset"],
+            index=0 if st.session_state.get("contour_area_coords") else 1,
+            horizontal=True,
+        )
+
         contour_section_line = None
         if st.session_state.get("section_line_coords"):
             try:
@@ -1081,8 +1225,27 @@ if show_gw_contours:
             except Exception:
                 contour_section_line = None
 
+        contour_area_polygon = None
+        if contour_scope == "Drawn polygon/rectangle only":
+            if st.session_state.get("contour_area_coords"):
+                try:
+                    contour_area_polygon = Polygon(st.session_state["contour_area_coords"])
+                    if not contour_area_polygon.is_valid:
+                        contour_area_polygon = contour_area_polygon.buffer(0)
+                except Exception:
+                    contour_area_polygon = None
+            if contour_area_polygon is None or contour_area_polygon.is_empty:
+                st.info("Draw a polygon or rectangle on the map to use the selected-area contour option.")
+
+        missing_drawn_area = (
+            contour_scope == "Drawn polygon/rectangle only"
+            and (contour_area_polygon is None or contour_area_polygon.is_empty)
+        )
+
         if not selected_gw_maps:
             st.info("Select at least one groundwater reading to show a contour map.")
+        elif missing_drawn_area:
+            pass
         else:
             for label in selected_gw_maps:
                 col = gw_option_map[label]
@@ -1091,6 +1254,7 @@ if show_gw_contours:
                     water_col=col,
                     title=f"Groundwater Contour Map — {label}",
                     section_line=contour_section_line,
+                    contour_area=contour_area_polygon,
                     grid_size=gw_grid_size,
                     contour_interval=gw_contour_interval,
                 )
