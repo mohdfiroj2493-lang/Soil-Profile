@@ -231,6 +231,108 @@ def build_matplotlib_profile_hatched(
     fig.tight_layout()
     return fig
 
+
+def build_water_elevation_section_plot(
+    df: pd.DataFrame,
+    ordered_bhs: List[str],
+    y_min: Optional[float] = None,
+    y_max: Optional[float] = None,
+    figsize: Tuple[float, float] = (18, 6),
+):
+    """
+    Standalone groundwater elevation plot by bore log name.
+    The bore log order follows the drawn section/profile order.
+    """
+    if df is None or df.empty or not ordered_bhs:
+        return None
+
+    x_vals = list(range(len(ordered_bhs)))
+    after_x, after_y = [], []
+    during_x, during_y = [], []
+
+    for i, bh in enumerate(ordered_bhs):
+        bore = df[df["Borehole"].astype(str) == str(bh)]
+        if bore.empty:
+            continue
+
+        if "Water_Elev_After" in bore.columns:
+            vals = pd.to_numeric(bore["Water_Elev_After"], errors="coerce").dropna()
+            if not vals.empty:
+                after_x.append(i)
+                after_y.append(float(vals.iloc[0]))
+
+        if "Water_Elev_During" in bore.columns:
+            vals = pd.to_numeric(bore["Water_Elev_During"], errors="coerce").dropna()
+            if not vals.empty:
+                during_x.append(i)
+                during_y.append(float(vals.iloc[0]))
+
+    all_y = after_y + during_y
+    if not all_y:
+        return None
+
+    if y_min is None:
+        y_min = math.floor((min(all_y) - 5.0) / 5.0) * 5.0
+    if y_max is None:
+        y_max = math.ceil((max(all_y) + 5.0) / 5.0) * 5.0
+    if y_max <= y_min:
+        y_min -= 5.0
+        y_max += 5.0
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=MATPLOTLIB_DISPLAY_DPI)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    if after_x:
+        ax.scatter(
+            after_x,
+            after_y,
+            s=70,
+            marker="o",
+            facecolor="orange",
+            edgecolor="black",
+            linewidth=1.0,
+            label="Water Elevation After Drilling",
+            zorder=4,
+        )
+
+    if during_x:
+        ax.scatter(
+            during_x,
+            during_y,
+            s=60,
+            marker="D",
+            facecolor="yellow",
+            edgecolor="black",
+            linewidth=1.0,
+            label="Water Elevation During Drilling",
+            zorder=5,
+        )
+
+    ax.set_xlim(-0.5, len(ordered_bhs) - 0.5)
+    ax.set_ylim(y_min, y_max)
+    ax.set_ylabel("Elevation (ft)", fontsize=14, fontweight="bold")
+    ax.set_title("Borelog Name", fontsize=15, fontweight="bold", pad=16)
+
+    ax.set_xticks(x_vals)
+    ax.set_xticklabels(ordered_bhs, rotation=90, fontsize=9)
+    ax.xaxis.tick_top()
+    ax.xaxis.set_label_position("top")
+
+    ax.tick_params(axis="y", labelsize=11)
+    ax.grid(True, which="both", color="#d9d9d9", linewidth=0.8)
+
+    ax.legend(
+        loc="lower left",
+        frameon=True,
+        facecolor="white",
+        edgecolor="black",
+        fontsize=10,
+    )
+
+    fig.tight_layout()
+    return fig
+
 ORDERED_SOIL_TYPES = [
     "Topsoil", "Water",
     "SM", "SM-ML", "SM-SC", "SP-SM", "SP", "SW",
@@ -1124,6 +1226,39 @@ with dl2:
     st.download_button("Download vector SVG", svg_buf, file_name="soil_profile_hatched.svg", mime="image/svg+xml")
 with dl3:
     st.download_button("Download vector PDF", pdf_buf, file_name="soil_profile_hatched.pdf", mime="application/pdf")
+
+
+st.markdown("### Groundwater Elevation Along Section")
+
+water_fig_width = max(18.0, min(42.0, 0.35 * max(1, len(ordered_bhs))))
+fig_water = build_water_elevation_section_plot(
+    df=plot_df,
+    ordered_bhs=ordered_bhs,
+    y_min=ymin_auto,
+    y_max=ymax_auto,
+    figsize=(water_fig_width, 6.0),
+)
+
+if fig_water is None:
+    st.info("No groundwater elevation data found for the selected section.")
+else:
+    water_png_buf = io.BytesIO()
+    fig_water.savefig(
+        water_png_buf,
+        format="png",
+        dpi=MATPLOTLIB_EXPORT_DPI,
+        bbox_inches="tight",
+        facecolor="white",
+    )
+    water_png_buf.seek(0)
+
+    st.pyplot(fig_water, clear_figure=True)
+    st.download_button(
+        "Download Groundwater Elevation Plot PNG",
+        data=water_png_buf,
+        file_name="groundwater_elevation_along_section.png",
+        mime="image/png",
+    )
 
 
 # ── Lab/SPT property plots for selected boreholes in the drawn section ───────
