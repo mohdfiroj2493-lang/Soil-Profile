@@ -718,6 +718,26 @@ def auto_y_limits(df, pad_ratio=0.05):
     return y_min - pad, y_max + pad
 
 
+def _nice_step(rng: float, target: int = 10) -> float:
+    """Choose a clean step size for grid/contour spacing over range rng."""
+    if rng <= 0:
+        return 1.0
+    rough = rng / max(1, target)
+    expv = math.floor(math.log10(rough))
+    frac = rough / (10 ** expv)
+    if frac <= 1:
+        nice = 1
+    elif frac <= 2:
+        nice = 2
+    elif frac <= 2.5:
+        nice = 2.5
+    elif frac <= 5:
+        nice = 5
+    else:
+        nice = 10
+    return nice * (10 ** expv)
+
+
 
 # ── Groundwater contour map helpers ─────────────────────────────────────────
 def prepare_groundwater_contour_points(df: pd.DataFrame, water_col: str) -> pd.DataFrame:
@@ -813,7 +833,23 @@ def build_groundwater_contour_figure(
     zmin = float(np.nanmin(gz))
     zmax = float(np.nanmax(gz))
     if contour_interval is None or contour_interval <= 0:
-        contour_interval = _nice_step(max(zmax - zmin, 1.0), target=10)
+        # Local fallback so the contour tool works even if the global _nice_step
+        # helper is moved below this section or removed during edits/deployment.
+        rng = max(zmax - zmin, 1.0)
+        rough = rng / 10.0
+        expv = math.floor(math.log10(rough)) if rough > 0 else 0
+        frac = rough / (10 ** expv) if rough > 0 else 1.0
+        if frac <= 1:
+            nice = 1
+        elif frac <= 2:
+            nice = 2
+        elif frac <= 2.5:
+            nice = 2.5
+        elif frac <= 5:
+            nice = 5
+        else:
+            nice = 10
+        contour_interval = nice * (10 ** expv)
     start = math.floor(zmin / contour_interval) * contour_interval
     end = math.ceil(zmax / contour_interval) * contour_interval
 
@@ -1158,25 +1194,6 @@ def dynamic_column_width(x_positions, default_width=60.0, min_width=8.0, fractio
     min_gap = min(gaps)
     width = min(default_width, fraction_of_min_gap * min_gap)
     return max(min_width, width)
-
-def _nice_step(rng: float, target: int = 10) -> float:
-    """Choose a 'nice' step size for grid spacing over range rng."""
-    if rng <= 0:
-        return 1.0
-    rough = rng / max(1, target)
-    expv = math.floor(math.log10(rough))
-    frac = rough / (10 ** expv)
-    if frac <= 1:
-        nice = 1
-    elif frac <= 2:
-        nice = 2
-    elif frac <= 2.5:
-        nice = 2.5
-    elif frac <= 5:
-        nice = 5
-    else:
-        nice = 10
-    return nice * (10 ** expv)
 
 # ── 2D Profile Builder (Plotly) ─────────────────────────────────────────────
 def build_plotly_profile(
