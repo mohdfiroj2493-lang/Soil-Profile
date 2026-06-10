@@ -1765,7 +1765,7 @@ def build_lab_property_matplotlib(
     ax.tick_params(axis="y", labelsize=10)
 
     if overlay_plotted:
-        ax.legend(loc="best", frameon=True, fontsize=9)
+        ax.legend(loc="lower right", frameon=True, fontsize=9)
 
     if not plotted:
         ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes, fontsize=11)
