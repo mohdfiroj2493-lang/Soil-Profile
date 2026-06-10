@@ -1744,7 +1744,7 @@ def build_lab_property_matplotlib(
                 d["Sample_Elev"],
                 marker="D",
                 s=58,
-                facecolors="yellow",
+                facecolors="red",
                 edgecolors="black",
                 linewidths=0.9,
                 alpha=0.98,
