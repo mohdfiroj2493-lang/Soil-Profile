@@ -522,6 +522,10 @@ def load_lab_multisheet(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
         "spt n-value": "SPT",
         "water content (%)": "Water_Content",
         "water content": "Water_Content",
+        "optimum water content (%)": "Optimum_Water_Content",
+        "optimum water content": "Optimum_Water_Content",
+        "owc (%)": "Optimum_Water_Content",
+        "owc": "Optimum_Water_Content",
         "dry unit weight (pcf)": "Dry_Unit_Weight",
         "dry unit weight": "Dry_Unit_Weight",
         "ucs (tsf)": "UCS",
@@ -545,10 +549,10 @@ def load_lab_multisheet(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
         if not {"Borehole", "Depth_ft"}.issubset(df_lab.columns):
             continue
         df_lab["Borehole"] = df_lab["Borehole"].astype(str).str.strip()
-        for c in ["Depth_ft", "SPT", "Water_Content", "Dry_Unit_Weight", "UCS", "LL", "PI"]:
+        for c in ["Depth_ft", "SPT", "Water_Content", "Optimum_Water_Content", "Dry_Unit_Weight", "UCS", "LL", "PI"]:
             if c in df_lab.columns:
                 df_lab[c] = pd.to_numeric(df_lab[c], errors="coerce")
-        keep = [c for c in ["Borehole", "Depth_ft", "SPT", "Water_Content", "Dry_Unit_Weight", "UCS", "LL", "PI"] if c in df_lab.columns]
+        keep = [c for c in ["Borehole", "Depth_ft", "SPT", "Water_Content", "Optimum_Water_Content", "Dry_Unit_Weight", "UCS", "LL", "PI"] if c in df_lab.columns]
         df_lab = df_lab.dropna(subset=["Borehole", "Depth_ft"])[keep].copy()
         if not df_lab.empty:
             df_lab["Lab_Sheet"] = sheet
@@ -1692,6 +1696,8 @@ def build_lab_property_matplotlib(
     y_min: float,
     y_max: float,
     figsize: Tuple[float, float] = (5.6, 7.2),
+    overlay_value_col: Optional[str] = None,
+    overlay_label: Optional[str] = None,
 ):
     """Matplotlib scatter plot of one lab/SPT property against elevation."""
     fig, ax = plt.subplots(figsize=figsize, dpi=160)
@@ -1717,7 +1723,35 @@ def build_lab_property_matplotlib(
                 edgecolors="black",
                 linewidths=0.8,
                 alpha=0.95,
+                label=x_title if not plotted else None,
             )
+            plotted = True
+
+    overlay_plotted = False
+    if lab_data is not None and not lab_data.empty and overlay_value_col and overlay_value_col in lab_data.columns:
+        for bh in boreholes:
+            d = lab_data[lab_data["Borehole"].astype(str) == str(bh)].copy()
+            if d.empty:
+                continue
+            d[overlay_value_col] = pd.to_numeric(d[overlay_value_col], errors="coerce")
+            d["Sample_Elev"] = pd.to_numeric(d["Sample_Elev"], errors="coerce")
+            d = d.dropna(subset=[overlay_value_col, "Sample_Elev"])
+            if d.empty:
+                continue
+
+            ax.scatter(
+                d[overlay_value_col],
+                d["Sample_Elev"],
+                marker="D",
+                s=58,
+                facecolors="yellow",
+                edgecolors="black",
+                linewidths=0.9,
+                alpha=0.98,
+                label=(overlay_label or overlay_value_col) if not overlay_plotted else None,
+                zorder=4,
+            )
+            overlay_plotted = True
             plotted = True
 
     ax.set_title(title, fontsize=12, fontweight="bold", pad=28)
@@ -1729,6 +1763,9 @@ def build_lab_property_matplotlib(
     ax.xaxis.set_ticks_position("top")
     ax.tick_params(axis="x", top=True, labeltop=True, bottom=False, labelbottom=False, labelsize=10)
     ax.tick_params(axis="y", labelsize=10)
+
+    if overlay_plotted:
+        ax.legend(loc="best", frameon=True, fontsize=9)
 
     if not plotted:
         ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes, fontsize=11)
@@ -1768,12 +1805,18 @@ else:
             file_name: str,
             download_key: str,
             no_data_message: str,
+            overlay_value_col: Optional[str] = None,
+            overlay_label: Optional[str] = None,
         ):
             with container:
-                if value_col in lab_plot_df.columns and lab_plot_df[value_col].notna().any():
+                has_primary_data = value_col in lab_plot_df.columns and lab_plot_df[value_col].notna().any()
+                has_overlay_data = overlay_value_col in lab_plot_df.columns and lab_plot_df[overlay_value_col].notna().any() if overlay_value_col else False
+                if has_primary_data or has_overlay_data:
                     fig_prop = build_lab_property_matplotlib(
                         lab_plot_df, selected_lab_plot_bhs, value_col,
-                        x_title, title, ymin_auto, ymax_auto
+                        x_title, title, ymin_auto, ymax_auto,
+                        overlay_value_col=overlay_value_col,
+                        overlay_label=overlay_label,
                     )
                     prop_png = figure_to_png_bytes(fig_prop, dpi=600)
                     st.pyplot(fig_prop, clear_figure=True)
@@ -1808,7 +1851,9 @@ else:
         render_lab_property_plot(
             col_wc, "Water_Content", "Water Content (%)", "Elevation vs Water Content",
             "Download Water Content Plot PNG", "elevation_vs_water_content.png",
-            "download_water_content_plot_png", "No water content data found for the selected bore logs."
+            "download_water_content_plot_png", "No water content data found for the selected bore logs.",
+            overlay_value_col="Optimum_Water_Content",
+            overlay_label="Optimum Water Content (%)",
         )
         render_lab_property_plot(
             col_ll, "LL", "LL", "Elevation vs LL",
