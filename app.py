@@ -24,8 +24,14 @@ from matplotlib.lines import Line2D
 
 # ── Visual config ────────────────────────────────────────────────────────────
 EXISTING_TEXT_COLORS = [
-    "#1e88e5", "#43a047", "#8e24aa", "#fb8c00", "#6d4c41",
-    "#3949ab", "#00897b", "#fdd835"
+    "#1e88e5",  # Sheet 1 - Blue
+    "#e53935",  # Sheet 2 - Red
+    "#8e24aa", 
+    "#fb8c00",  
+    "#6d4c41",
+    "#3949ab",
+    "#00897b",
+    "#fdd835"
 ]
 PROPOSED_TEXT_COLORS = [
     "#e53935", "#8e24aa", "#3949ab", "#00897b", "#fdd835",
