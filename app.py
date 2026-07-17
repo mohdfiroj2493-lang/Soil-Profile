@@ -29,7 +29,7 @@ EXISTING_TEXT_COLORS = [
 ]
 PROPOSED_TEXT_COLORS = [
     "#e53935", "#8e24aa", "#3949ab", "#00897b", "#fdd835",
-    "#6d4c41", "#43a047", "#fb8c00"
+    "#6d4c41", "#ff0000", "#fb8c00"
 ]
 CIRCLE_RADIUS_PX, CIRCLE_STROKE, CIRCLE_STROKE_W = 10, "#ffffff", 1
 CIRCLE_FILL_OPACITY, LABEL_DX_PX, LABEL_DY_PX = 0.95, 8, -10
