@@ -1016,6 +1016,7 @@ st.sidebar.header("Upload Files")
 main_file = st.sidebar.file_uploader("MAIN borehole Excel (multi-sheet OK)", type=["xlsx", "xls"])
 prop_file = st.sidebar.file_uploader("Optional PROPOSED.xlsx (multi-sheet OK)", type=["xlsx", "xls"])
 lab_file = st.sidebar.file_uploader("Optional Lab Test Excel (SPT/lab values)", type=["xlsx", "xls"])
+map_bearing = st.sidebar.slider("Map rotation / bearing (degrees)", -180.0, 180.0, 0.0, 1.0)
 
 if main_file is None:
     st.title("Map with Bore Logs")
@@ -1077,7 +1078,16 @@ st.title("Map with Bore Logs")
 center_lat = float(df["Latitude"].mean())
 center_lon = float(df["Longitude"].mean())
 
-fmap = Map(location=(center_lat, center_lon), zoom_start=13, control_scale=True)
+fmap = Map(
+    location=(center_lat, center_lon),
+    zoom_start=13,
+    control_scale=True,
+    rotate=True,
+    touchRotate=True,
+    bearing=float(map_bearing),
+    rotateControl={"closeOnZeroBearing": False},
+)
+fmap.add_js_link("leaflet_rotate", "https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js")
 folium.raster_layers.TileLayer(
     tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     name="Esri Satellite", attr="Tiles © Esri", overlay=False, control=True
@@ -1136,6 +1146,7 @@ LayerControl(position="topright").add_to(fmap)
 
 map_out = st_folium(fmap, height=600, use_container_width=True,
                     returned_objects=["last_active_drawing", "all_drawings"], key="map")
+st.caption("Rotate the map with the bearing slider in the sidebar. North-up is 0°.")
 
 def extract_linestring(mo):
     lad = mo.get("last_active_drawing")
