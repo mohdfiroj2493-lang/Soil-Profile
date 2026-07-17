@@ -31,7 +31,7 @@ EXISTING_TEXT_COLORS = [
     "#6d4c41",
     "#3949ab",
     "#00897b",
-    "#fdd835"
+    "#fdd835" 
 ]
 PROPOSED_TEXT_COLORS = [
     "#e53935", "#8e24aa", "#3949ab", "#00897b", "#fdd835",
