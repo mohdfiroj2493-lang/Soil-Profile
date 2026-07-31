@@ -55,7 +55,7 @@ SOIL_COLOR_MAP = {
     # Rock / Fill / Weathered
     "PWR": "#808080","RF": "#929591","Rock": "#c0c0c0","BASALT": "#bbf90f","BRECCIA": "#f5deb3","CHERT": "#a0522d",
     "CLAYSTONE": "#c7c10c","SANDY CLAYSTONE": "#ddd618","SILTY CLAYSTONE": "#cdc50a",
-    "DIATOMITE": "#7bc8f6","DOLOMITE": "#000080", "LIMESTONE": "#006400","MUDSTONE": "#add8e6",
+    "DIATOMITE": "#7bc8f6","DOLOMITE": "#000080", "LIMESTONE": "#006400", "SHALE / LIMESTONE": "#0cdc53", "MUDSTONE": "#add8e6",
     "SANDSTONE": "#cb00f5","CLAYEY SANDSTONE": "#d94ff5","SILTY SANDSTONE": "#d648d7",
     "SHALE": "#13eac9",
     "CONGLOMERATE": "#0cdc53", "BASALT CONGLOMERATE": "#0cdc53",
@@ -83,7 +83,7 @@ SOIL_HATCH_MAP = {
     "Rock": "xx", "PWR": "xx", "RF": "++",
     "CLAYSTONE": "x.x.", "SANDY CLAYSTONE": "///", "SILTY CLAYSTONE": "++",
     "SILTSTONE": "***", "SANDY SILTSTONE": "*.*.",
-    "CONGLOMERATE": "OO",
+    "CONGLOMERATE": "OO", "LIMESTONE": "oo", "SHALE / LIMESTONE": "oo", 
     "SANDSTONE": "...", "CLAYEY SANDSTONE": "/./.", "SILTY SANDSTONE": "|.|.|.", 
     "SHALE": "----",
 }
