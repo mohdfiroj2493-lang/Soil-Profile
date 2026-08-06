@@ -47,7 +47,7 @@ SOIL_COLOR_MAP = {
     "Topsoil": "#ffffcb", "Water": "#00ffff",
     # Clays/Silts
     "CL": "#c5cae9","CH": "#64b5f6","CL-CH": "#fff176","CL-ML": "#ef9a9a",
-    "OH": "#0cdc53","OL": "#0cdc53",
+    "OH": "#FFE89F","OL": "#FFE89F",
     "ML": "#ef5350","MH": "#ffb74d","ML-CL": "#dbb40c",
     # Gravels/Sands
     "GM": "#aed581","GW": "#c8e6c9","GC": "#00ff00","GP": "#aaff32","GP-GC": "#008000","GP-GM": "#15b01a",
@@ -73,7 +73,7 @@ SOIL_HATCH_MAP = {
     "CL-ML": "xx", "CL-CH": "++", "ML-CL": "--",
 
     # Sands/Gravels
-     "SM": "xxx", "SM": "OOO", "SM": "///", "SP": "xx", "SC": "\\\\", "SW": "++",
+     "SM-FILL": "xxx", "SM": "OOO", "SM": "///", "SP": "xx", "SC": "\\\\", "SW": "++",
     "GM": "oo", "GP": "++", "GC": "xx", "GW": "..",
     "SM-SC": "/\\", "SM-ML": "..", "SC-CL": "xx", "SC-SM": "++",
     "SP-SM": "oo", "SP-SC": "xx", "SW-SM": "..",
