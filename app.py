@@ -47,10 +47,11 @@ SOIL_COLOR_MAP = {
     "Topsoil": "#ffffcb", "Water": "#00ffff",
     # Clays/Silts
     "CL": "#c5cae9","CH": "#64b5f6","CL-CH": "#fff176","CL-ML": "#ef9a9a",
+    "OH": "#0cdc53","OL": "#0cdc53",
     "ML": "#ef5350","MH": "#ffb74d","ML-CL": "#dbb40c",
     # Gravels/Sands
     "GM": "#aed581","GW": "#c8e6c9","GC": "#00ff00","GP": "#aaff32","GP-GC": "#008000","GP-GM": "#15b01a",
-    "SM": "#76d7c4","SP": "#ce93d8","SC": "#81c784","SW": "#ba68c8",
+    "SM-FILL": "#76d7c4", "SM": "#76d7c4","SP": "#ce93d8","SC": "#81c784","SW": "#ba68c8",
     "SM-SC": "#e1bee7","SM-ML": "#dcedc8","SC-CL": "#ffee58","SC-SM": "#fff59d","SP-SM": "#c1f80a","SP-SC": "#7fff00","SW-SM": "#90ee90",
     # Rock / Fill / Weathered
     "PWR": "#808080","RF": "#929591","Rock": "#c0c0c0","BASALT": "#bbf90f","BRECCIA": "#f5deb3","CHERT": "#a0522d",
@@ -68,10 +69,11 @@ SOIL_COLOR_MAP = {
 SOIL_HATCH_MAP = {
     # Fine soils
     "CL": "....", "CH": "oooo", "ML": "////", "MH": "\\\\\\\\",
+    "OH": "III", "OL": "+++",
     "CL-ML": "xx", "CL-CH": "++", "ML-CL": "--",
 
     # Sands/Gravels
-    "SM": "///", "SP": "xx", "SC": "\\\\", "SW": "++",
+    "SM": "OOO", "SM": "///", "SP": "xx", "SC": "\\\\", "SW": "++",
     "GM": "oo", "GP": "++", "GC": "xx", "GW": "..",
     "SM-SC": "/\\", "SM-ML": "..", "SC-CL": "xx", "SC-SM": "++",
     "SP-SM": "oo", "SP-SC": "xx", "SW-SM": "..",
