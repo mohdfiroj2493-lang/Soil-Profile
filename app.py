@@ -69,11 +69,11 @@ SOIL_COLOR_MAP = {
 SOIL_HATCH_MAP = {
     # Fine soils
     "CL": "....", "CH": "oooo", "ML": "////", "MH": "\\\\\\\\",
-    "OH": "III", "OL": "+++",
+    "OH": "---", "OL": "+++",
     "CL-ML": "xx", "CL-CH": "++", "ML-CL": "--",
 
     # Sands/Gravels
-    "SM": "OOO", "SM": "///", "SP": "xx", "SC": "\\\\", "SW": "++",
+     "SM": "xxx", "SM": "OOO", "SM": "///", "SP": "xx", "SC": "\\\\", "SW": "++",
     "GM": "oo", "GP": "++", "GC": "xx", "GW": "..",
     "SM-SC": "/\\", "SM-ML": "..", "SC-CL": "xx", "SC-SM": "++",
     "SP-SM": "oo", "SP-SC": "xx", "SW-SM": "..",
