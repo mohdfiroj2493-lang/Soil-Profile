@@ -511,7 +511,8 @@ def load_lab_multisheet(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
     """
     Load the separate Lab Test workbook.
     Expected columns include: Bore Log, Depth (ft), SPT N, Water Content (%),
-    Dry Unit Weight (pcf), UCS (tsf), LL, and PI. Header spaces are ignored.
+    Dry Unit Weight (pcf), UCS (tsf), LL, PI, plus consolidation-test data:
+    Pc, Cc, Cr, eo/e0, Cv (ft2/day), and Calpha. Header spaces are ignored.
     """
     all_sheets = pd.read_excel(io.BytesIO(uploaded_bytes), sheet_name=None)
     result: Dict[str, pd.DataFrame] = {}
@@ -538,6 +539,23 @@ def load_lab_multisheet(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
         "pi": "PI",
         "plasticity index": "PI",
         "plasticity index (%)": "PI",
+        # Consolidation-test properties (Lab Test columns K:P)
+        "pc": "Pc",
+        "preconsolidation pressure": "Pc",
+        "preconsolidation stress": "Pc",
+        "cc": "Cc",
+        "compression index": "Cc",
+        "cr": "Cr",
+        "recompression index": "Cr",
+        "eo": "e0",
+        "e0": "e0",
+        "initial void ratio": "e0",
+        "cv (ft2/day)": "Cv",
+        "cv (ft²/day)": "Cv",
+        "cv": "Cv",
+        "calpha": "Calpha",
+        "c alpha": "Calpha",
+        "cα": "Calpha",
     }
 
     for i, (sheet, df_lab) in enumerate(all_sheets.items()):
@@ -551,10 +569,19 @@ def load_lab_multisheet(uploaded_bytes: bytes) -> Dict[str, pd.DataFrame]:
         if not {"Borehole", "Depth_ft"}.issubset(df_lab.columns):
             continue
         df_lab["Borehole"] = df_lab["Borehole"].astype(str).str.strip()
-        for c in ["Depth_ft", "SPT", "Water_Content", "Optimum_Water_Content", "Dry_Unit_Weight", "UCS", "LL", "PI"]:
+        numeric_lab_cols = [
+            "Depth_ft", "SPT", "Water_Content", "Optimum_Water_Content",
+            "Dry_Unit_Weight", "UCS", "LL", "PI",
+            "Pc", "Cc", "Cr", "e0", "Cv", "Calpha",
+        ]
+        for c in numeric_lab_cols:
             if c in df_lab.columns:
                 df_lab[c] = pd.to_numeric(df_lab[c], errors="coerce")
-        keep = [c for c in ["Borehole", "Depth_ft", "SPT", "Water_Content", "Optimum_Water_Content", "Dry_Unit_Weight", "UCS", "LL", "PI"] if c in df_lab.columns]
+        keep = [c for c in [
+            "Borehole", "Depth_ft", "SPT", "Water_Content", "Optimum_Water_Content",
+            "Dry_Unit_Weight", "UCS", "LL", "PI",
+            "Pc", "Cc", "Cr", "e0", "Cv", "Calpha",
+        ] if c in df_lab.columns]
         df_lab = df_lab.dropna(subset=["Borehole", "Depth_ft"])[keep].copy()
         if not df_lab.empty:
             df_lab["Lab_Sheet"] = sheet
@@ -1877,6 +1904,43 @@ else:
             col_pi, "PI", "PI", "Elevation vs PI",
             "Download PI Plot PNG", "elevation_vs_pi.png",
             "download_pi_plot_png", "No PI data found for the selected bore logs."
+        )
+
+        # Consolidation-test property plots from Lab Test columns K:P.
+        st.markdown("#### Consolidation Test Plots")
+
+        col_pc, col_cc, col_cr = st.columns(3)
+        render_lab_property_plot(
+            col_pc, "Pc", "Pc", "Elevation vs Pc",
+            "Download Pc Plot PNG", "elevation_vs_pc.png",
+            "download_pc_plot_png", "No Pc data found for the selected bore logs."
+        )
+        render_lab_property_plot(
+            col_cc, "Cc", "Cc", "Elevation vs Cc",
+            "Download Cc Plot PNG", "elevation_vs_cc.png",
+            "download_cc_plot_png", "No Cc data found for the selected bore logs."
+        )
+        render_lab_property_plot(
+            col_cr, "Cr", "Cr", "Elevation vs Cr",
+            "Download Cr Plot PNG", "elevation_vs_cr.png",
+            "download_cr_plot_png", "No Cr data found for the selected bore logs."
+        )
+
+        col_e0, col_cv, col_calpha = st.columns(3)
+        render_lab_property_plot(
+            col_e0, "e0", "e0", "Elevation vs e0",
+            "Download e0 Plot PNG", "elevation_vs_e0.png",
+            "download_e0_plot_png", "No e0 data found for the selected bore logs."
+        )
+        render_lab_property_plot(
+            col_cv, "Cv", "Cv (ft²/day)", "Elevation vs Cv",
+            "Download Cv Plot PNG", "elevation_vs_cv.png",
+            "download_cv_plot_png", "No Cv data found for the selected bore logs."
+        )
+        render_lab_property_plot(
+            col_calpha, "Calpha", "Cα", "Elevation vs Cα",
+            "Download Cα Plot PNG", "elevation_vs_calpha.png",
+            "download_calpha_plot_png", "No Cα data found for the selected bore logs."
         )
 
 
