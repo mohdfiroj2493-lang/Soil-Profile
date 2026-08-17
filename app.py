@@ -106,6 +106,12 @@ def build_matplotlib_profile_hatched(
     show_ucs: bool = False,
     show_ll: bool = False,
     show_pi: bool = False,
+    show_pc: bool = False,
+    show_cc: bool = False,
+    show_cr: bool = False,
+    show_e0: bool = False,
+    show_cv: bool = False,
+    show_calpha: bool = False,
     figsize: Tuple[float, float] = (18, 10),
 ):
     """
@@ -190,7 +196,14 @@ def build_matplotlib_profile_hatched(
             lab_bore = lab_df[lab_df["Borehole"].astype(str) == str(bh)].dropna(subset=["Sample_Elev"])
             lab_offset = max(4.0, half * 0.15)
             for _, lab in lab_bore.iterrows():
-                label = format_lab_label(lab, show_spt=show_spt, show_wc=show_wc, show_duw=show_duw, show_ucs=show_ucs, show_ll=show_ll, show_pi=show_pi, sep="; ", style="mathtext")
+                label = format_lab_label(
+                    lab,
+                    show_spt=show_spt, show_wc=show_wc, show_duw=show_duw,
+                    show_ucs=show_ucs, show_ll=show_ll, show_pi=show_pi,
+                    show_pc=show_pc, show_cc=show_cc, show_cr=show_cr,
+                    show_e0=show_e0, show_cv=show_cv, show_calpha=show_calpha,
+                    sep="; ", style="mathtext"
+                )
                 if not label:
                     continue
                 y = float(lab["Sample_Elev"])
@@ -478,19 +491,44 @@ def collect_water_points_for_borehole(bore: pd.DataFrame, x: float) -> Dict[str,
         }
     return points
 
-def format_lab_label(row, show_spt=True, show_wc=False, show_duw=False, show_ucs=False, show_ll=False, show_pi=False, sep="; ", style="plain"):
+def format_lab_label(
+    row,
+    show_spt=True, show_wc=False, show_duw=False, show_ucs=False,
+    show_ll=False, show_pi=False,
+    show_pc=False, show_cc=False, show_cr=False,
+    show_e0=False, show_cv=False, show_calpha=False,
+    sep="; ", style="plain"
+):
     """Build one compact label shown at each SPT/lab sample depth."""
     parts = []
 
     if style == "html":
         gamma_d = "γ<sub>d</sub>"
         q_u = "q<sub>u</sub>"
+        p_c = "P<sub>c</sub>"
+        c_c = "C<sub>c</sub>"
+        c_r = "C<sub>r</sub>"
+        e_0 = "e<sub>0</sub>"
+        c_v = "C<sub>v</sub>"
+        c_alpha = "C<sub>α</sub>"
     elif style == "mathtext":
         gamma_d = r"$\gamma_d$"
         q_u = r"$q_u$"
+        p_c = r"$P_c$"
+        c_c = r"$C_c$"
+        c_r = r"$C_r$"
+        e_0 = r"$e_0$"
+        c_v = r"$C_v$"
+        c_alpha = r"$C_\alpha$"
     else:
         gamma_d = "γd"
         q_u = "qu"
+        p_c = "Pc"
+        c_c = "Cc"
+        c_r = "Cr"
+        e_0 = "e0"
+        c_v = "Cv"
+        c_alpha = "Cα"
 
     if show_spt and "SPT" in row and pd.notna(row.get("SPT")):
         parts.append(f"N={_fmt_num(row.get('SPT'))}")
@@ -504,6 +542,21 @@ def format_lab_label(row, show_spt=True, show_wc=False, show_duw=False, show_ucs
         parts.append(f"LL={_fmt_num(row.get('LL'))}")
     if show_pi and "PI" in row and pd.notna(row.get("PI")):
         parts.append(f"PI={_fmt_num(row.get('PI'))}")
+
+    # Consolidation-test data (Lab Test columns K:P).
+    if show_pc and "Pc" in row and pd.notna(row.get("Pc")):
+        parts.append(f"{p_c}={_fmt_num(row.get('Pc'), 2)}")
+    if show_cc and "Cc" in row and pd.notna(row.get("Cc")):
+        parts.append(f"{c_c}={_fmt_num(row.get('Cc'), 3)}")
+    if show_cr and "Cr" in row and pd.notna(row.get("Cr")):
+        parts.append(f"{c_r}={_fmt_num(row.get('Cr'), 3)}")
+    if show_e0 and "e0" in row and pd.notna(row.get("e0")):
+        parts.append(f"{e_0}={_fmt_num(row.get('e0'), 3)}")
+    if show_cv and "Cv" in row and pd.notna(row.get("Cv")):
+        parts.append(f"{c_v}={_fmt_num(row.get('Cv'), 4)}ft²/day")
+    if show_calpha and "Calpha" in row and pd.notna(row.get("Calpha")):
+        parts.append(f"{c_alpha}={_fmt_num(row.get('Calpha'), 4)}")
+
     return sep.join(parts)
 
 @st.cache_data(show_spinner=False)
@@ -1366,6 +1419,22 @@ with colF:
 with colG:
     show_pi = st.checkbox("Show PI", value=False)
 
+# Optional consolidation-test labels on the bore-log profile.
+st.caption("Consolidation test data on profile (Lab Test columns K–P)")
+colH, colI, colJ, colK, colL, colM = st.columns(6)
+with colH:
+    show_pc = st.checkbox("Show Pc", value=False)
+with colI:
+    show_cc = st.checkbox("Show Cc", value=False)
+with colJ:
+    show_cr = st.checkbox("Show Cr", value=False)
+with colK:
+    show_e0 = st.checkbox("Show e0", value=False)
+with colL:
+    show_cv = st.checkbox("Show Cv", value=False)
+with colM:
+    show_calpha = st.checkbox("Show Cα", value=False)
+
 if not st.session_state["section_line_coords"]:
     st.info("Draw a polyline on the map (double-click to finish). The profiles will appear below automatically.")
     st.stop()
@@ -1416,6 +1485,12 @@ def build_plotly_profile(
     show_ucs: bool = False,
     show_ll: bool = False,
     show_pi: bool = False,
+    show_pc: bool = False,
+    show_cc: bool = False,
+    show_cr: bool = False,
+    show_e0: bool = False,
+    show_cv: bool = False,
+    show_calpha: bool = False,
     fig_height_px: int = 1000,
 ) -> go.Figure:
     # Width is either manual (passed) or auto from spacing
@@ -1544,7 +1619,14 @@ def build_plotly_profile(
             lab_bore = lab_df[lab_df["Borehole"].astype(str) == str(bh)].dropna(subset=["Sample_Elev"])
             lab_offset = max(4.0, half * 0.15)
             for _, lab in lab_bore.iterrows():
-                label = format_lab_label(lab, show_spt=show_spt, show_wc=show_wc, show_duw=show_duw, show_ucs=show_ucs, show_ll=show_ll, show_pi=show_pi, sep="; ", style="html")
+                label = format_lab_label(
+                    lab,
+                    show_spt=show_spt, show_wc=show_wc, show_duw=show_duw,
+                    show_ucs=show_ucs, show_ll=show_ll, show_pi=show_pi,
+                    show_pc=show_pc, show_cc=show_cc, show_cr=show_cr,
+                    show_e0=show_e0, show_cv=show_cv, show_calpha=show_calpha,
+                    sep="; ", style="html"
+                )
                 if not label:
                     continue
                 y = float(lab["Sample_Elev"])
@@ -1636,6 +1718,12 @@ fig2d = build_plotly_profile(
     show_ucs=show_ucs,
     show_ll=show_ll,
     show_pi=show_pi,
+    show_pc=show_pc,
+    show_cc=show_cc,
+    show_cr=show_cr,
+    show_e0=show_e0,
+    show_cv=show_cv,
+    show_calpha=show_calpha,
     fig_height_px=fig_height_px
 )
 st.plotly_chart(
@@ -1666,6 +1754,12 @@ fig_hatched = build_matplotlib_profile_hatched(
     show_ucs=show_ucs,
     show_ll=show_ll,
     show_pi=show_pi,
+    show_pc=show_pc,
+    show_cc=show_cc,
+    show_cr=show_cr,
+    show_e0=show_e0,
+    show_cv=show_cv,
+    show_calpha=show_calpha,
     figsize=(profile_fig_width, profile_fig_height)
 )
 
