@@ -2005,7 +2005,7 @@ else:
 
         col_pc, col_cc, col_cr = st.columns(3)
         render_lab_property_plot(
-            col_pc, "Pc", "Pc", "Elevation vs Pc",
+            col_pc, "Pc", "Pc (tsf)", "Elevation vs Pc",
             "Download Pc Plot PNG", "elevation_vs_pc.png",
             "download_pc_plot_png", "No Pc data found for the selected bore logs."
         )
