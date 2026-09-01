@@ -16,7 +16,7 @@ import streamlit as st
 from streamlit_folium import st_folium
 import folium
 from folium import Map, LayerControl
-from folium.plugins import Draw
+from folium.plugins import Draw, Fullscreen
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -1225,6 +1225,15 @@ Draw(
     edit_options={"edit": True, "remove": True}
 ).add_to(fmap)
 LayerControl(position="topright").add_to(fmap)
+# Fullscreen button: expands the map to the browser viewport while keeping
+# all map controls, borehole labels, drawing tools, and layer controls available.
+Fullscreen(
+    position="topleft",
+    title="Show map full screen",
+    title_cancel="Exit full screen",
+    force_separate_button=True,
+    force_fullscreen=True,
+).add_to(fmap)
 
 map_out = st_folium(fmap, height=600, use_container_width=True,
                     returned_objects=["last_active_drawing", "all_drawings"], key="map")
