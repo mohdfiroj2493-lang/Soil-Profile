@@ -1100,12 +1100,6 @@ prop_file = st.sidebar.file_uploader("Optional PROPOSED.xlsx (multi-sheet OK)", 
 lab_file = st.sidebar.file_uploader("Optional Lab Test Excel (SPT/lab values)", type=["xlsx", "xls"])
 map_bearing = st.sidebar.slider("Map rotation / bearing (degrees)", -180.0, 180.0, 0.0, 1.0)
 
-# Manual execution control. Streamlit still performs a lightweight script rerun when
-# a widget changes (this is how Streamlit works), but the calculations/plots below
-# are NOT regenerated until the user presses this button.
-run_requested = st.sidebar.button("Run / Update App", type="primary", use_container_width=True)
-st.sidebar.caption("Change settings or redraw the map first, then press Run / Update App.")
-
 if main_file is None:
     st.title("Map with Bore Logs")
     st.info("Upload the MAIN Excel to begin.")
@@ -1289,12 +1283,6 @@ if maybe_line is not None:
 maybe_area = extract_area_polygon(map_out or {})
 if maybe_area is not None:
     st.session_state["contour_area_coords"] = list(map(list, maybe_area.exterior.coords))
-
-# Do not run the calculation/plotting portion automatically after every widget
-# or map change. The current selections/drawings are retained in session state.
-if not run_requested:
-    st.info("Make your changes, then click **Run / Update App** in the sidebar to calculate and refresh the outputs.")
-    st.stop()
 
 # ── Groundwater contour maps in plan view ───────────────────────────────────
 st.markdown("### Groundwater Contour Map — Plan View (optional)")
@@ -1857,6 +1845,20 @@ def build_lab_property_matplotlib(
     """Matplotlib scatter plot of one lab/SPT property against elevation."""
     fig, ax = plt.subplots(figsize=figsize, dpi=160)
 
+    # Color lab/SPT points by the worksheet they came from.  load_lab_multisheet()
+    # stores the source worksheet in Lab_Sheet, so the same sheet keeps the same
+    # color across every property plot.
+    if lab_data is not None and not lab_data.empty and "Lab_Sheet" in lab_data.columns:
+        sheet_names = list(dict.fromkeys(lab_data["Lab_Sheet"].dropna().astype(str).tolist()))
+    else:
+        sheet_names = ["Lab Data"]
+
+    sheet_color_map = {
+        sheet: EXISTING_TEXT_COLORS[i % len(EXISTING_TEXT_COLORS)]
+        for i, sheet in enumerate(sheet_names)
+    }
+    legend_added = set()
+
     plotted = False
     if lab_data is not None and not lab_data.empty and value_col in lab_data.columns:
         for bh in boreholes:
@@ -1869,18 +1871,24 @@ def build_lab_property_matplotlib(
             if d.empty:
                 continue
 
-            ax.scatter(
-                d[value_col],
-                d["Sample_Elev"],
-                marker="o",
-                s=42,
-                facecolors="orange",
-                edgecolors="black",
-                linewidths=0.8,
-                alpha=0.95,
-                label=x_title if not plotted else None,
-            )
-            plotted = True
+            if "Lab_Sheet" not in d.columns:
+                d["Lab_Sheet"] = "Lab Data"
+
+            for sheet, ds in d.groupby("Lab_Sheet", sort=False):
+                sheet = str(sheet)
+                ax.scatter(
+                    ds[value_col],
+                    ds["Sample_Elev"],
+                    marker="o",
+                    s=42,
+                    facecolors=sheet_color_map.get(sheet, "#808080"),
+                    edgecolors="black",
+                    linewidths=0.8,
+                    alpha=0.95,
+                    label=sheet if sheet not in legend_added else None,
+                )
+                legend_added.add(sheet)
+                plotted = True
 
     overlay_plotted = False
     if lab_data is not None and not lab_data.empty and overlay_value_col and overlay_value_col in lab_data.columns:
@@ -1894,20 +1902,25 @@ def build_lab_property_matplotlib(
             if d.empty:
                 continue
 
-            ax.scatter(
-                d[overlay_value_col],
-                d["Sample_Elev"],
-                marker="D",
-                s=58,
-                facecolors="red",
-                edgecolors="black",
-                linewidths=0.9,
-                alpha=0.98,
-                label=(overlay_label or overlay_value_col) if not overlay_plotted else None,
-                zorder=4,
-            )
-            overlay_plotted = True
-            plotted = True
+            if "Lab_Sheet" not in d.columns:
+                d["Lab_Sheet"] = "Lab Data"
+
+            for sheet, ds in d.groupby("Lab_Sheet", sort=False):
+                sheet = str(sheet)
+                ax.scatter(
+                    ds[overlay_value_col],
+                    ds["Sample_Elev"],
+                    marker="D",
+                    s=58,
+                    facecolors=sheet_color_map.get(sheet, "#808080"),
+                    edgecolors="black",
+                    linewidths=0.9,
+                    alpha=0.98,
+                    label=None,
+                    zorder=4,
+                )
+                overlay_plotted = True
+                plotted = True
 
     ax.set_title(title, fontsize=12, fontweight="bold", pad=28)
     ax.set_xlabel(x_title, fontsize=11, labelpad=8)
@@ -1919,8 +1932,14 @@ def build_lab_property_matplotlib(
     ax.tick_params(axis="x", top=True, labeltop=True, bottom=False, labelbottom=False, labelsize=10)
     ax.tick_params(axis="y", labelsize=10)
 
-    if overlay_plotted:
-        ax.legend(loc="lower right", frameon=True, fontsize=9)
+    if legend_added:
+        ax.legend(
+            title="Lab Sheet",
+            loc="best",
+            frameon=True,
+            fontsize=8,
+            title_fontsize=9,
+        )
 
     if not plotted:
         ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes, fontsize=11)
