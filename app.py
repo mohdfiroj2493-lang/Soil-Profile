@@ -1883,7 +1883,7 @@ def build_lab_property_matplotlib(
             label = sheet if sheet not in legend_sheets else None
 
             ax.scatter(
-                d[value_col], d["Sample_Elev"], marker="o", s=42,
+                d[value_col], d["Sample_Elev"], marker="o", s=60,
                 facecolors=color, edgecolors="black", linewidths=0.8, alpha=0.95,
                 label=label,
             )
@@ -1912,7 +1912,7 @@ def build_lab_property_matplotlib(
             overlay_plotted = True
             plotted = True
 
-    ax.set_title(title, fontsize=12, fontweight="bold", pad=28)
+    # Plot title removed as requested
     ax.set_xlabel(x_title, fontsize=11, labelpad=8)
     ax.xaxis.set_label_position("top")
     ax.set_ylabel("Elevation (ft)", fontsize=11)
