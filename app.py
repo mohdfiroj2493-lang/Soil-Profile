@@ -648,8 +648,18 @@ def attach_lab_elevations(lab_dict: Dict[str, pd.DataFrame], layer_df: pd.DataFr
     lab_df = pd.concat(lab_dict.values(), ignore_index=True)
     if lab_df.empty:
         return pd.DataFrame()
-    top_map = layer_df.groupby("Borehole")["Elevation_From"].max().rename("Top_Elevation")
-    lab_df = lab_df.merge(top_map, how="left", left_on="Borehole", right_index=True)
+    # Match every lab row to the MAIN bore-log sheet using the Borehole name.
+    # The Lab workbook itself may contain only one sheet; its sheet name is not
+    # used for plotting colors. Colors come from the corresponding MAIN sheet.
+    bore_meta = (
+        layer_df.groupby("Borehole", as_index=False)
+        .agg(
+            Top_Elevation=("Elevation_From", "max"),
+            Borelog_Sheet=("Sheet", "first"),
+            Borelog_Color=("Color", "first"),
+        )
+    )
+    lab_df = lab_df.merge(bore_meta, how="left", on="Borehole")
     lab_df["Sample_Elev"] = lab_df["Top_Elevation"] - lab_df["Depth_ft"]
     return lab_df
 
@@ -1842,24 +1852,13 @@ def build_lab_property_matplotlib(
     overlay_value_col: Optional[str] = None,
     overlay_label: Optional[str] = None,
 ):
-    """Matplotlib scatter plot of one lab/SPT property against elevation."""
+    """Plot lab/SPT data colored by the corresponding MAIN bore-log sheet."""
     fig, ax = plt.subplots(figsize=figsize, dpi=160)
 
-    # Color lab/SPT points by the worksheet they came from.  load_lab_multisheet()
-    # stores the source worksheet in Lab_Sheet, so the same sheet keeps the same
-    # color across every property plot.
-    if lab_data is not None and not lab_data.empty and "Lab_Sheet" in lab_data.columns:
-        sheet_names = list(dict.fromkeys(lab_data["Lab_Sheet"].dropna().astype(str).tolist()))
-    else:
-        sheet_names = ["Lab Data"]
-
-    sheet_color_map = {
-        sheet: EXISTING_TEXT_COLORS[i % len(EXISTING_TEXT_COLORS)]
-        for i, sheet in enumerate(sheet_names)
-    }
-    legend_added = set()
-
     plotted = False
+    legend_sheets = set()
+    selected = lab_data[lab_data["Borehole"].astype(str).isin([str(b) for b in boreholes])].copy()
+
     if lab_data is not None and not lab_data.empty and value_col in lab_data.columns:
         for bh in boreholes:
             d = lab_data[lab_data["Borehole"].astype(str) == str(bh)].copy()
@@ -1871,25 +1870,20 @@ def build_lab_property_matplotlib(
             if d.empty:
                 continue
 
-            if "Lab_Sheet" not in d.columns:
-                d["Lab_Sheet"] = "Lab Data"
+            sheet = str(d["Borelog_Sheet"].iloc[0]) if "Borelog_Sheet" in d.columns and pd.notna(d["Borelog_Sheet"].iloc[0]) else "Unmatched"
+            color = str(d["Borelog_Color"].iloc[0]) if "Borelog_Color" in d.columns and pd.notna(d["Borelog_Color"].iloc[0]) else "#999999"
+            label = sheet if sheet not in legend_sheets else None
 
-            for sheet, ds in d.groupby("Lab_Sheet", sort=False):
-                sheet = str(sheet)
-                ax.scatter(
-                    ds[value_col],
-                    ds["Sample_Elev"],
-                    marker="o",
-                    s=42,
-                    facecolors=sheet_color_map.get(sheet, "#808080"),
-                    edgecolors="black",
-                    linewidths=0.8,
-                    alpha=0.95,
-                    label=sheet if sheet not in legend_added else None,
-                )
-                legend_added.add(sheet)
-                plotted = True
+            ax.scatter(
+                d[value_col], d["Sample_Elev"], marker="o", s=42,
+                facecolors=color, edgecolors="black", linewidths=0.8, alpha=0.95,
+                label=label,
+            )
+            legend_sheets.add(sheet)
+            plotted = True
 
+    # Optional overlay (e.g., optimum water content): same MAIN-sheet color,
+    # diamond marker, so sheet identity remains consistent.
     overlay_plotted = False
     if lab_data is not None and not lab_data.empty and overlay_value_col and overlay_value_col in lab_data.columns:
         for bh in boreholes:
@@ -1901,26 +1895,14 @@ def build_lab_property_matplotlib(
             d = d.dropna(subset=[overlay_value_col, "Sample_Elev"])
             if d.empty:
                 continue
-
-            if "Lab_Sheet" not in d.columns:
-                d["Lab_Sheet"] = "Lab Data"
-
-            for sheet, ds in d.groupby("Lab_Sheet", sort=False):
-                sheet = str(sheet)
-                ax.scatter(
-                    ds[overlay_value_col],
-                    ds["Sample_Elev"],
-                    marker="D",
-                    s=58,
-                    facecolors=sheet_color_map.get(sheet, "#808080"),
-                    edgecolors="black",
-                    linewidths=0.9,
-                    alpha=0.98,
-                    label=None,
-                    zorder=4,
-                )
-                overlay_plotted = True
-                plotted = True
+            color = str(d["Borelog_Color"].iloc[0]) if "Borelog_Color" in d.columns and pd.notna(d["Borelog_Color"].iloc[0]) else "#999999"
+            ax.scatter(
+                d[overlay_value_col], d["Sample_Elev"], marker="D", s=58,
+                facecolors=color, edgecolors="black", linewidths=1.2, alpha=0.98,
+                zorder=4,
+            )
+            overlay_plotted = True
+            plotted = True
 
     ax.set_title(title, fontsize=12, fontweight="bold", pad=28)
     ax.set_xlabel(x_title, fontsize=11, labelpad=8)
@@ -1932,14 +1914,15 @@ def build_lab_property_matplotlib(
     ax.tick_params(axis="x", top=True, labeltop=True, bottom=False, labelbottom=False, labelsize=10)
     ax.tick_params(axis="y", labelsize=10)
 
-    if legend_added:
-        ax.legend(
-            title="Lab Sheet",
-            loc="best",
-            frameon=True,
-            fontsize=8,
-            title_fontsize=9,
-        )
+    if legend_sheets:
+        handles = []
+        for sheet in sorted(legend_sheets):
+            ds = selected[selected.get("Borelog_Sheet", pd.Series(index=selected.index, dtype=object)).astype(str) == sheet]
+            color = str(ds["Borelog_Color"].dropna().iloc[0]) if not ds.empty and "Borelog_Color" in ds.columns and not ds["Borelog_Color"].dropna().empty else "#999999"
+            handles.append(Line2D([0], [0], marker="o", linestyle="none", markerfacecolor=color, markeredgecolor="black", markersize=7, label=sheet))
+        if overlay_plotted:
+            handles.append(Line2D([0], [0], marker="D", linestyle="none", markerfacecolor="white", markeredgecolor="black", markersize=7, label=overlay_label or overlay_value_col))
+        ax.legend(handles=handles, loc="lower right", frameon=True, fontsize=9, title="Bore Log Sheet")
 
     if not plotted:
         ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes, fontsize=11)
