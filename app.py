@@ -1100,12 +1100,6 @@ prop_file = st.sidebar.file_uploader("Optional PROPOSED.xlsx (multi-sheet OK)", 
 lab_file = st.sidebar.file_uploader("Optional Lab Test Excel (SPT/lab values)", type=["xlsx", "xls"])
 map_bearing = st.sidebar.slider("Map rotation / bearing (degrees)", -180.0, 180.0, 0.0, 1.0)
 
-# Manual execution control. Streamlit still performs a lightweight script rerun when
-# a widget changes (this is how Streamlit works), but the calculations/plots below
-# are NOT regenerated until the user presses this button.
-run_requested = st.sidebar.button("Run / Update App", type="primary", use_container_width=True)
-st.sidebar.caption("Change settings or redraw the map first, then press Run / Update App.")
-
 if main_file is None:
     st.title("Map with Bore Logs")
     st.info("Upload the MAIN Excel to begin.")
@@ -1289,12 +1283,6 @@ if maybe_line is not None:
 maybe_area = extract_area_polygon(map_out or {})
 if maybe_area is not None:
     st.session_state["contour_area_coords"] = list(map(list, maybe_area.exterior.coords))
-
-# Do not run the calculation/plotting portion automatically after every widget
-# or map change. The current selections/drawings are retained in session state.
-if not run_requested:
-    st.info("Make your changes, then click **Run / Update App** in the sidebar to calculate and refresh the outputs.")
-    st.stop()
 
 # ── Groundwater contour maps in plan view ───────────────────────────────────
 st.markdown("### Groundwater Contour Map — Plan View (optional)")
