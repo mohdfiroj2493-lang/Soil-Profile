@@ -651,14 +651,21 @@ def attach_lab_elevations(lab_dict: Dict[str, pd.DataFrame], layer_df: pd.DataFr
     # Match every lab row to the MAIN bore-log sheet using the Borehole name.
     # The Lab workbook itself may contain only one sheet; its sheet name is not
     # used for plotting colors. Colors come from the corresponding MAIN sheet.
+    # Lab-plot colors follow the order of the MAIN bore-log sheets:
+    # 1st sheet = yellow, 2nd = red, 3rd = green.
+    # Additional sheets use fallback colors in sequence.
+    lab_sheet_palette = ["#FFD700", "#FF0000", "#00A651", "#1E88E5", "#8E24AA", "#FB8C00", "#6D4C41", "#3949AB"]
+    sheet_order = list(dict.fromkeys(layer_df["Sheet"].dropna().astype(str).tolist()))
+    lab_sheet_color_map = {sheet: lab_sheet_palette[i % len(lab_sheet_palette)] for i, sheet in enumerate(sheet_order)}
+
     bore_meta = (
         layer_df.groupby("Borehole", as_index=False)
         .agg(
             Top_Elevation=("Elevation_From", "max"),
             Borelog_Sheet=("Sheet", "first"),
-            Borelog_Color=("Color", "first"),
         )
     )
+    bore_meta["Borelog_Color"] = bore_meta["Borelog_Sheet"].astype(str).map(lab_sheet_color_map).fillna("#999999")
     lab_df = lab_df.merge(bore_meta, how="left", on="Borehole")
     lab_df["Sample_Elev"] = lab_df["Top_Elevation"] - lab_df["Depth_ft"]
     return lab_df
@@ -1858,6 +1865,7 @@ def build_lab_property_matplotlib(
     plotted = False
     legend_sheets = set()
     selected = lab_data[lab_data["Borehole"].astype(str).isin([str(b) for b in boreholes])].copy()
+    sheet_order = list(dict.fromkeys(selected["Borelog_Sheet"].dropna().astype(str).tolist())) if "Borelog_Sheet" in selected.columns else []
 
     if lab_data is not None and not lab_data.empty and value_col in lab_data.columns:
         for bh in boreholes:
@@ -1916,13 +1924,13 @@ def build_lab_property_matplotlib(
 
     if legend_sheets:
         handles = []
-        for sheet in sorted(legend_sheets):
+        for sheet in [x for x in sheet_order if x in legend_sheets]:
             ds = selected[selected.get("Borelog_Sheet", pd.Series(index=selected.index, dtype=object)).astype(str) == sheet]
             color = str(ds["Borelog_Color"].dropna().iloc[0]) if not ds.empty and "Borelog_Color" in ds.columns and not ds["Borelog_Color"].dropna().empty else "#999999"
             handles.append(Line2D([0], [0], marker="o", linestyle="none", markerfacecolor=color, markeredgecolor="black", markersize=7, label=sheet))
         if overlay_plotted:
             handles.append(Line2D([0], [0], marker="D", linestyle="none", markerfacecolor="white", markeredgecolor="black", markersize=7, label=overlay_label or overlay_value_col))
-        ax.legend(handles=handles, loc="lower right", frameon=True, fontsize=9, title="Bore Log Sheet")
+        ax.legend(handles=handles, loc="lower right", frameon=True, fontsize=9)
 
     if not plotted:
         ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes, fontsize=11)
