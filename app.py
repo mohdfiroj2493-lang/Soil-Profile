@@ -350,10 +350,10 @@ def build_water_elevation_section_plot(
     return fig
 
 ORDERED_SOIL_TYPES = [
-    "Topsoil", "Water",
-    "SM", "SM-ML", "SM-SC", "SP-SM", "SP", "SW",
+    "Topsoil", "Water", "NA",
+    "SM","SM-FILL","SM-ML", "SM-SC", "SP-SM", "SP", "SW",
     "SC", "SC-CL", "SC-SM", "SP-SC","SW-SM",
-    "CL", "CL-ML", "CL-CH", "CH",
+    "CL", "CL-ML", "CL-CH", "CH", "OH", "OL",
     "ML", "MH", "ML-CL", 
     "GM", "GP-GM", "GP-GC", "GP", "GC", "GW",
     "Rock", "PWR", "RF", "BASALT CONGLOMERATE", "CONGLOMERATE", "BASALT", "BRECCIA", "CHERT",
