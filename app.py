@@ -1903,10 +1903,9 @@ def build_lab_property_matplotlib(
             d = d.dropna(subset=[overlay_value_col, "Sample_Elev"])
             if d.empty:
                 continue
-            color = str(d["Borelog_Color"].iloc[0]) if "Borelog_Color" in d.columns and pd.notna(d["Borelog_Color"].iloc[0]) else "#999999"
             ax.scatter(
-                d[overlay_value_col], d["Sample_Elev"], marker="D", s=60,
-                facecolors=color, edgecolors="black", linewidths=1.2, alpha=0.98,
+                d[overlay_value_col], d["Sample_Elev"], marker="D", s=75,
+                facecolors="red", edgecolors="black", linewidths=1.2, alpha=0.98,
                 zorder=4,
             )
             overlay_plotted = True
@@ -1929,7 +1928,7 @@ def build_lab_property_matplotlib(
             color = str(ds["Borelog_Color"].dropna().iloc[0]) if not ds.empty and "Borelog_Color" in ds.columns and not ds["Borelog_Color"].dropna().empty else "#999999"
             handles.append(Line2D([0], [0], marker="o", linestyle="none", markerfacecolor=color, markeredgecolor="black", markersize=7, label=sheet))
         if overlay_plotted:
-            handles.append(Line2D([0], [0], marker="D", linestyle="none", markerfacecolor="white", markeredgecolor="black", markersize=8, label=overlay_label or overlay_value_col))
+            handles.append(Line2D([0], [0], marker="D", linestyle="none", markerfacecolor="red", markeredgecolor="black", markersize=8, label=overlay_label or overlay_value_col))
         ax.legend(handles=handles, loc="lower right", frameon=True, fontsize=9)
 
     if not plotted:
