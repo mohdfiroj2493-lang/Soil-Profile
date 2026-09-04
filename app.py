@@ -652,9 +652,9 @@ def attach_lab_elevations(lab_dict: Dict[str, pd.DataFrame], layer_df: pd.DataFr
     # The Lab workbook itself may contain only one sheet; its sheet name is not
     # used for plotting colors. Colors come from the corresponding MAIN sheet.
     # Lab-plot colors follow the order of the MAIN bore-log sheets:
-    # 1st sheet = yellow, 2nd = red, 3rd = green.
+    # 1st sheet = yellow, 2nd = light pink, 3rd = green.
     # Additional sheets use fallback colors in sequence.
-    lab_sheet_palette = ["#FFD700", "#FF0000", "#00A651", "#1E88E5", "#8E24AA", "#FB8C00", "#6D4C41", "#3949AB"]
+    lab_sheet_palette = ["#FFD700", "#FFB6C1", "#00A651", "#1E88E5", "#8E24AA", "#FB8C00", "#6D4C41", "#3949AB"]
     sheet_order = list(dict.fromkeys(layer_df["Sheet"].dropna().astype(str).tolist()))
     lab_sheet_color_map = {sheet: lab_sheet_palette[i % len(lab_sheet_palette)] for i, sheet in enumerate(sheet_order)}
 
