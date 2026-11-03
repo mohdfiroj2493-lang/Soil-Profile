@@ -1916,6 +1916,7 @@ def build_lab_property_matplotlib(
     ax.xaxis.set_label_position("top")
     ax.set_ylabel("Elevation (ft)", fontsize=11)
     ax.set_ylim(y_min, y_max)
+    ax.set_xlim(left=0)
     ax.grid(True, which="both", linewidth=0.5, alpha=0.45)
     ax.xaxis.set_ticks_position("top")
     ax.tick_params(axis="x", top=True, labeltop=True, bottom=False, labelbottom=False, labelsize=10)
