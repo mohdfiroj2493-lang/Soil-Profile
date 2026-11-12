@@ -121,13 +121,20 @@ def build_matplotlib_profile_hatched(
     half = width / 2.0
 
     xs = list(x_positions.values())
-    # Add extra x-axis space so soil-code/lab labels beside the first and last
-    # boreholes do not get clipped by the plot boundary.
+    # Fit the horizontal axis to the selected boreholes and visible annotations.
     if xs:
         x_range = max(xs) - min(xs) if len(xs) > 1 else width
-        x_label_pad = max(250.0, 4.0 * width, 0.06 * max(1.0, x_range))
-        xmin = min(0.0, min(xs) - half - x_label_pad)
-        xmax = max(xs) + half + x_label_pad
+        # Tight, data-driven horizontal limits. Reserve extra room only when
+        # labels are displayed outside the borehole columns.
+        base_pad = max(3.0, 0.035 * max(x_range, width), 0.35 * width)
+        left_pad = base_pad + (max(12.0, 1.5 * width) if show_codes else 0.0)
+        lab_labels_on = lab_df is not None and not lab_df.empty and any([
+            show_spt, show_wc, show_duw, show_ucs, show_ll, show_pi,
+            show_pc, show_cc, show_cr, show_e0, show_cv, show_calpha
+        ])
+        right_pad = base_pad + (max(20.0, 2.5 * width) if lab_labels_on else 0.0)
+        xmin = min(xs) - half - left_pad
+        xmax = max(xs) + half + right_pad
     else:
         xmin, xmax = -250.0, 250.0
 
@@ -1524,13 +1531,20 @@ def build_plotly_profile(
     half = width / 2.0
 
     xs = list(x_positions.values())
-    # Add extra x-axis space so soil-code/lab labels beside the first and last
-    # boreholes do not get clipped by the plot boundary.
+    # Fit the horizontal axis to the selected boreholes and visible annotations.
     if xs:
         x_range = max(xs) - min(xs) if len(xs) > 1 else width
-        x_label_pad = max(250.0, 4.0 * width, 0.06 * max(1.0, x_range))
-        xmin = min(0.0, min(xs) - half - x_label_pad)
-        xmax = max(xs) + half + x_label_pad
+        # Tight, data-driven horizontal limits. Reserve extra room only when
+        # labels are displayed outside the borehole columns.
+        base_pad = max(3.0, 0.035 * max(x_range, width), 0.35 * width)
+        left_pad = base_pad + (max(12.0, 1.5 * width) if show_codes else 0.0)
+        lab_labels_on = lab_df is not None and not lab_df.empty and any([
+            show_spt, show_wc, show_duw, show_ucs, show_ll, show_pi,
+            show_pc, show_cc, show_cr, show_e0, show_cv, show_calpha
+        ])
+        right_pad = base_pad + (max(20.0, 2.5 * width) if lab_labels_on else 0.0)
+        xmin = min(xs) - half - left_pad
+        xmax = max(xs) + half + right_pad
     else:
         xmin, xmax = -250.0, 250.0
 
