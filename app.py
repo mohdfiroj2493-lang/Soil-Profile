@@ -201,7 +201,7 @@ def build_matplotlib_profile_hatched(
         # SPT/lab labels from the separate Lab Test workbook at the exact sample elevations
         if lab_df is not None and not lab_df.empty:
             lab_bore = lab_df[lab_df["Borehole"].astype(str) == str(bh)].dropna(subset=["Sample_Elev"])
-            lab_offset = max(4.0, half * 0.15)
+            lab_offset = max(0.6, min(1.5, width * 0.025))
             for _, lab in lab_bore.iterrows():
                 label = format_lab_label(
                     lab,
@@ -214,7 +214,6 @@ def build_matplotlib_profile_hatched(
                 if not label:
                     continue
                 y = float(lab["Sample_Elev"])
-                ax.plot([x + half, x + half + lab_offset * 0.7], [y, y], color="black", linewidth=0.8)
                 ax.text(x + half + lab_offset, y, label, ha="left", va="center", fontsize=8)
 
     # Plot groundwater markers after soil rectangles so they stay visible.
@@ -1657,7 +1656,7 @@ def build_plotly_profile(
         # SPT/lab labels from the separate Lab Test workbook at the exact sample elevations
         if lab_df is not None and not lab_df.empty:
             lab_bore = lab_df[lab_df["Borehole"].astype(str) == str(bh)].dropna(subset=["Sample_Elev"])
-            lab_offset = max(4.0, half * 0.15)
+            lab_offset = max(0.6, min(1.5, width * 0.025))
             for _, lab in lab_bore.iterrows():
                 label = format_lab_label(
                     lab,
